@@ -47,6 +47,13 @@ const SEARCH_PROVIDERS = [
     urlPlaceholder: "https://search.example.com",
     needsApiKey: false,
   },
+  {
+    id: "mmx",
+    label: "MiniMax mmx-cli",
+    hint: "Web search via the local mmx-cli (MiniMax) binary",
+    keyPlaceholder: "",
+    needsApiKey: false,
+  },
 ] as const
 
 export function WebSearchSection() {
@@ -300,7 +307,11 @@ export function WebSearchSection() {
 
               {isExpanded && (
                 <div className="space-y-4 border-t bg-background/50 px-4 py-3">
-                  {provider.needsApiKey ? (
+                  {provider.id === "mmx" ? (
+                    <p className="text-xs text-muted-foreground">
+                      {t("settings.sections.webSearch.mmxInstallHint")}
+                    </p>
+                  ) : provider.needsApiKey ? (
                     <div className="space-y-2">
                       <Label>{t("settings.apiKey")}</Label>
                       <Input
