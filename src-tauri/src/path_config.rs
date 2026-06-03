@@ -222,6 +222,52 @@ pub fn resolve_paths(
     Ok(resolved)
 }
 
+// ---------------------------------------------------------------------------
+// Loaders / savers (Task 4 — project-level; Task 5 — global)
+// ---------------------------------------------------------------------------
+
+/// Load the project-level `paths.yaml` from
+/// `<project_root>/.llm-wiki/paths.yaml`.
+///
+/// - `Ok(None)`  — file does not exist; caller should fall back to the
+///                 next layer (global, then built-in default).
+/// - `Ok(Some)`  — file present, version matches, parsed cleanly.
+/// - `Err(_)`    — I/O error, YAML syntax error, or version mismatch.
+///                 Version mismatch on a *project* file is treated as
+///                 a hard error (caller rejects the project); the
+///                 global file is more lenient (Task 5).
+pub fn load_project_yaml(project_root: &Path) -> Result<Option<PathsFile>, PathConfigError> {
+    let p = project_root.join(".llm-wiki/paths.yaml");
+    if !p.exists() {
+        return Ok(None);
+    }
+    let s = std::fs::read_to_string(&p).map_err(|e| PathConfigError::Io(e.to_string()))?;
+    let file: PathsFile =
+        serde_yaml::from_str(&s).map_err(|e| PathConfigError::Yaml(e.to_string()))?;
+    if file.version != CURRENT_SCHEMA_VERSION {
+        return Err(PathConfigError::UnsupportedVersion(file.version));
+    }
+    Ok(Some(file))
+}
+
+/// Save a `PathsFile` to `<project_root>/.llm-wiki/paths.yaml`,
+/// creating the `.llm-wiki` directory if needed. The write is
+/// atomic — we serialize to a `.tmp` sibling then `rename` over the
+/// target, so a half-written file can never appear on disk.
+pub fn save_project_yaml(
+    project_root: &Path,
+    file: &PathsFile,
+) -> Result<(), PathConfigError> {
+    let dir = project_root.join(".llm-wiki");
+    std::fs::create_dir_all(&dir).map_err(|e| PathConfigError::Io(e.to_string()))?;
+    let s = serde_yaml::to_string(file).map_err(|e| PathConfigError::Yaml(e.to_string()))?;
+    let tmp = dir.join("paths.yaml.tmp");
+    std::fs::write(&tmp, s).map_err(|e| PathConfigError::Io(e.to_string()))?;
+    std::fs::rename(&tmp, dir.join("paths.yaml"))
+        .map_err(|e| PathConfigError::Io(e.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,5 +358,70 @@ paths:
         };
         let result = resolve_paths(Some(&bad), None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_project_yaml_missing_returns_none() {
+        let dir = tempdir_unique("pc-missing");
+        let result = load_project_yaml(&dir).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn load_project_yaml_present_parses() {
+        let dir = tempdir_unique("pc-present");
+        std::fs::create_dir_all(dir.join(".llm-wiki")).unwrap();
+        std::fs::write(
+            dir.join(".llm-wiki/paths.yaml"),
+            "version: 1\npaths:\n  raw_sources: docs/inbox\n",
+        )
+        .unwrap();
+        let result = load_project_yaml(&dir).unwrap().unwrap();
+        assert_eq!(result.paths.raw_sources, PathBuf::from("docs/inbox"));
+        assert_eq!(result.version, 1);
+    }
+
+    #[test]
+    fn load_project_yaml_unsupported_version_fails() {
+        let dir = tempdir_unique("pc-version");
+        std::fs::create_dir_all(dir.join(".llm-wiki")).unwrap();
+        std::fs::write(
+            dir.join(".llm-wiki/paths.yaml"),
+            "version: 999\npaths: {}\n",
+        )
+        .unwrap();
+        let result = load_project_yaml(&dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn save_project_yaml_round_trips() {
+        let dir = tempdir_unique("pc-save");
+        let cfg = PathsFile {
+            version: CURRENT_SCHEMA_VERSION,
+            paths: Paths {
+                raw_sources: PathBuf::from("docs/inbox"),
+                ..Paths::default()
+            },
+        };
+        save_project_yaml(&dir, &cfg).unwrap();
+        let loaded = load_project_yaml(&dir).unwrap().unwrap();
+        assert_eq!(loaded.paths.raw_sources, PathBuf::from("docs/inbox"));
+    }
+
+    /// Test-only helper: create a uniquely-named temp dir under
+    /// `std::env::temp_dir()`. The atomic counter avoids collisions
+    /// between parallel test threads.
+    fn tempdir_unique(tag: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Plan's literal text had `static N: AtomicU64 = AtomicU64 =
+        // AtomicU64::new(0);` — a clear typo. Corrected to the
+        // single-init form below.
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!("llm-wiki-{tag}-{n}"));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
     }
 }
