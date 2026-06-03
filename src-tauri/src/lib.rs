@@ -4,6 +4,7 @@ mod commands;
 mod panic_guard;
 mod path_config;
 mod proxy;
+mod state;
 mod types;
 
 use panic_guard::run_guarded;
@@ -111,6 +112,11 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("[path_config] could not resolve app_data_dir: {e}"),
             }
+            // ProjectPathsCache (Task 7). Registered as Tauri
+            // managed state so commands can read the currently-open
+            // project's resolved layout via `tauri::State`. Starts
+            // empty; `open_project` / `create_project` populate it.
+            app.manage(state::ProjectPathsCache::new());
             // Registry of running `claude` subprocesses, keyed by the
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.

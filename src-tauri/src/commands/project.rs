@@ -8,6 +8,7 @@ use tauri_plugin_opener::OpenerExt;
 
 use crate::panic_guard::run_guarded;
 use crate::path_config::{self, Paths};
+use crate::state::ProjectPathsCache;
 use crate::types::wiki::WikiProject;
 
 /// Project directories that `create_project` materializes. Returned as
@@ -31,16 +32,18 @@ fn dirs_from_paths(p: &Paths) -> Vec<&Path> {
 #[tauri::command]
 pub fn create_project(
     app: AppHandle,
+    state: tauri::State<'_, ProjectPathsCache>,
     name: String,
     path: String,
 ) -> Result<WikiProject, String> {
     run_guarded("create_project", || {
-        create_project_impl(app, name, path)
+        create_project_impl(app, state, name, path)
     })
 }
 
 fn create_project_impl(
     app: AppHandle,
+    state: tauri::State<'_, ProjectPathsCache>,
     name: String,
     path: String,
 ) -> Result<WikiProject, String> {
@@ -286,6 +289,11 @@ related: []
         obsidian_core_plugins,
     )?;
 
+    // Cache the resolved layout so subsequent commands (file_sync,
+    // vectorstore, etc.) can read it via `tauri::State` instead of
+    // re-resolving.
+    state.set(paths);
+
     Ok(WikiProject {
         name,
         // Forward slashes for cross-platform consistency in the TS layer.
@@ -294,11 +302,31 @@ related: []
 }
 
 #[tauri::command]
-pub fn open_project(path: String) -> Result<WikiProject, String> {
+pub fn open_project(
+    app: AppHandle,
+    state: tauri::State<'_, ProjectPathsCache>,
+    path: String,
+) -> Result<WikiProject, String> {
     run_guarded("open_project", || {
         let root = Path::new(&path);
 
-        validate_wiki_project_root(root)?;
+        // Resolve the layout for this project: project-level yaml
+        // (if any) + global yaml + built-in defaults. Errors here
+        // (version mismatch, parse error, unsafe path) are surfaced
+        // to the user as a regular command error.
+        let global = app
+            .path()
+            .app_data_dir()
+            .ok()
+            .and_then(|d| path_config::load_global_yaml_at(&d).ok().flatten())
+            .map(|f| f.paths);
+        let project_file = path_config::load_project_yaml(root)
+            .map_err(|e| format!("path config: {e}"))?;
+        let project_paths = project_file.map(|f| f.paths);
+        let paths = path_config::resolve_paths(project_paths.as_ref(), global.as_ref())
+            .map_err(|e| format!("path config: {e}"))?;
+
+        validate_wiki_project_root(root, &paths)?;
 
         // Derive project name from the directory name
         let name = root
@@ -306,6 +334,9 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
             .and_then(|n| n.to_str())
             .unwrap_or("Unknown")
             .to_string();
+
+        // Cache the resolved layout for subsequent commands.
+        state.set(paths);
 
         Ok(WikiProject {
             name,
@@ -316,10 +347,30 @@ pub fn open_project(path: String) -> Result<WikiProject, String> {
 }
 
 #[tauri::command]
-pub fn open_project_folder(app: AppHandle, path: String) -> Result<(), String> {
+pub fn open_project_folder(
+    app: AppHandle,
+    path: String,
+) -> Result<(), String> {
     run_guarded("open_project_folder", || {
         let root = Path::new(&path);
-        validate_wiki_project_root(root)?;
+
+        // Re-resolve rather than read from the cache: this command
+        // may be called on a project that's not the currently open
+        // one (e.g. user right-clicks a different project folder).
+        // The cost is one yaml read; the safety is correctness.
+        let global = app
+            .path()
+            .app_data_dir()
+            .ok()
+            .and_then(|d| path_config::load_global_yaml_at(&d).ok().flatten())
+            .map(|f| f.paths);
+        let project_file = path_config::load_project_yaml(root)
+            .map_err(|e| format!("path config: {e}"))?;
+        let project_paths = project_file.map(|f| f.paths);
+        let paths = path_config::resolve_paths(project_paths.as_ref(), global.as_ref())
+            .map_err(|e| format!("path config: {e}"))?;
+
+        validate_wiki_project_root(root, &paths)?;
 
         let canonical = root
             .canonicalize()
@@ -341,7 +392,7 @@ pub fn open_project_folder(app: AppHandle, path: String) -> Result<(), String> {
     })
 }
 
-fn validate_wiki_project_root(root: &Path) -> Result<(), String> {
+fn validate_wiki_project_root(root: &Path, paths: &Paths) -> Result<(), String> {
     if !root.exists() {
         return Err(format!("Path does not exist: '{}'", root.display()));
     }
@@ -349,15 +400,20 @@ fn validate_wiki_project_root(root: &Path) -> Result<(), String> {
         return Err(format!("Path is not a directory: '{}'", root.display()));
     }
 
-    if !root.join("schema.md").exists() {
+    // Use the resolved layout, not hardcoded \"schema.md\" / \"wiki\".
+    // A project that put its schema at \"docs/schema.md\" via
+    // paths.yaml must validate against \"docs/schema.md\".
+    if !root.join(&paths.schema).exists() {
         return Err(format!(
-            "Not a valid wiki project (missing schema.md): '{}'",
+            "Not a valid wiki project (missing {}): '{}'",
+            paths.schema.display(),
             root.display()
         ));
     }
-    if !root.join("wiki").is_dir() {
+    if !root.join(&paths.wiki_root).is_dir() {
         return Err(format!(
-            "Not a valid wiki project (missing wiki/ directory): '{}'",
+            "Not a valid wiki project (missing {} directory): '{}'",
+            paths.wiki_root.display(),
             root.display()
         ));
     }
