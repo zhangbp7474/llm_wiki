@@ -7,7 +7,7 @@ use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::panic_guard::run_guarded;
-use crate::path_config::{self, Paths};
+use crate::path_config::{self, resolve_under, Paths};
 use crate::state::ProjectPathsCache;
 use crate::types::wiki::WikiProject;
 
@@ -228,7 +228,7 @@ When sources contradict each other:
 - Project created
 "#
     );
-    write_file_inner(root.join(&paths.log), &log_content)?;
+    write_file_inner(resolve_under(&root, &paths.log), &log_content)?;
 
     // overview.md
     let overview_content = r#"---
@@ -403,14 +403,14 @@ fn validate_wiki_project_root(root: &Path, paths: &Paths) -> Result<(), String> 
     // Use the resolved layout, not hardcoded \"schema.md\" / \"wiki\".
     // A project that put its schema at \"docs/schema.md\" via
     // paths.yaml must validate against \"docs/schema.md\".
-    if !root.join(&paths.schema).exists() {
+    if !resolve_under(root, &paths.schema).exists() {
         return Err(format!(
             "Not a valid wiki project (missing {}): '{}'",
             paths.schema.display(),
             root.display()
         ));
     }
-    if !root.join(&paths.wiki_root).is_dir() {
+    if !resolve_under(root, &paths.wiki_root).is_dir() {
         return Err(format!(
             "Not a valid wiki project (missing {} directory): '{}'",
             paths.wiki_root.display(),

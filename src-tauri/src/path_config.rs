@@ -9,8 +9,12 @@
 //! Resolution order for each path key (see `resolve_paths` in Task 3):
 //!   project  →  global  →  built-in default (`DEFAULT_PATHS`).
 //!
-//! Safety: resolved paths must be project-relative and must not contain
-//! `..` traversal. This is enforced by `validate` (Task 3).
+//! Safety: resolved paths must not contain `..` traversal (which would
+//! escape the project root). Absolute paths are now allowed (Task 15.1,
+//! post-plan relaxation): they are stored verbatim in the layout but
+//! bypass the "join under project root" logic in `validate_wiki_project_root`
+//! and `safe_join` — callers that need to combine an absolute path with a
+//! project root should check `is_absolute()` first.
 
 use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
@@ -94,6 +98,20 @@ pub struct PathsFile {
 pub static DEFAULT_PATHS: std::sync::LazyLock<Paths> =
     std::sync::LazyLock::new(Paths::default);
 
+/// Combine a project root with a layout path. If the layout path is
+/// absolute, return it verbatim (Task 15.1 relaxation). Otherwise join
+/// it under the project root.
+///
+/// Use this anywhere the old code did `root.join(&paths.X)` so we
+/// transparently support both project-relative and absolute layouts.
+pub fn resolve_under(root: &Path, p: &Path) -> PathBuf {
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        root.join(p)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Resolution (Task 3)
 // ---------------------------------------------------------------------------
@@ -117,13 +135,11 @@ pub enum PathConfigError {
     UnsupportedVersion(u32),
 }
 
-/// Reject any path that is absolute or contains a `..` component.
-/// Both are unsafe in the context of project-relative layouts because
-/// they could escape the project root.
+/// Reject any path that contains a `..` component. Absolute paths are
+/// accepted (Task 15.1 relaxation): they are stored as-is in the layout,
+/// so callers that previously assumed "always join under project root"
+/// must now guard with `is_absolute()` before combining.
 fn validate(path: &Path) -> Result<(), PathConfigError> {
-    if path.is_absolute() {
-        return Err(PathConfigError::AbsolutePath(path.display().to_string()));
-    }
     for c in path.components() {
         if matches!(c, Component::ParentDir) {
             return Err(PathConfigError::UnsafePath(path.display().to_string()));
@@ -385,13 +401,32 @@ paths:
     }
 
     #[test]
-    fn resolve_rejects_absolute_paths() {
+    fn resolve_accepts_absolute_paths() {
+        // Post-Task 15.1 relaxation: absolute paths are allowed and stored
+        // verbatim. Callers (api_server, file_sync) guard with is_absolute()
+        // when they need to combine with the project root.
+        let abs = Paths {
+            raw_sources: PathBuf::from("/tmp/llm-wiki-inbox"),
+            wiki_root: PathBuf::from("/var/lib/llm-wiki/wiki"),
+            ..Paths::default()
+        };
+        let result = resolve_paths(Some(&abs), None).unwrap();
+        assert_eq!(result.raw_sources, PathBuf::from("/tmp/llm-wiki-inbox"));
+        assert_eq!(result.wiki_root, PathBuf::from("/var/lib/llm-wiki/wiki"));
+        // Other fields still take the built-in default.
+        assert_eq!(result.raw_root, PathBuf::from("raw"));
+    }
+
+    #[test]
+    fn validate_still_rejects_parent_traversal() {
+        // `..` is still rejected even after the absolute-path relaxation,
+        // because it can escape any project-relative root.
         let bad = Paths {
-            raw_sources: PathBuf::from("/etc/passwd"),
+            raw_sources: PathBuf::from("../escape"),
             ..Paths::default()
         };
         let result = resolve_paths(Some(&bad), None);
-        assert!(result.is_err());
+        assert!(result.is_err(), "must still reject '..' in paths");
     }
 
     #[test]

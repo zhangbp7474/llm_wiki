@@ -296,7 +296,13 @@ pub fn start_project_file_watcher(
             .get()
             .unwrap_or_default();
         for rel in [&supplemental.raw_sources, &supplemental.wiki_root] {
-            let path = root.join(rel);
+            // Task 15.1: a rel may now be absolute (paths.yaml override).
+            // In that case skip the project-root join.
+            let path = if rel.is_absolute() {
+                rel.clone()
+            } else {
+                root.join(rel)
+            };
             if path.exists() {
                 if let Err(err) = watcher.watch(&path, RecursiveMode::Recursive) {
                     eprintln!(

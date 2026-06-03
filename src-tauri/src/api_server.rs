@@ -766,9 +766,20 @@ fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(project_path);
     let rel = rel.trim_start_matches('/');
     let rel_path = Path::new(rel);
+
+    // Task 15.1 relaxation: an absolute `rel` is allowed and is returned
+    // verbatim. The caller is responsible for ensuring the path was
+    // sourced from the resolved `Paths` layout (e.g. `paths.wiki_root`),
+    // not from an untrusted HTTP body.
     if rel_path.is_absolute() {
-        return Err("Absolute paths are not allowed".to_string());
+        for component in rel_path.components() {
+            if matches!(component, Component::ParentDir) {
+                return Err("Path traversal is not allowed".to_string());
+            }
+        }
+        return Ok(rel_path.to_path_buf());
     }
+
     for component in rel_path.components() {
         if matches!(
             component,

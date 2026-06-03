@@ -88,7 +88,14 @@ Only `version` is mandatory. Omit any field you want to keep at default.
 | `schema`         | `schema.md`       | project schema markdown |
 | `purpose`        | `purpose.md`      | project purpose markdown |
 
-All paths are **project-relative** (no leading slash, no `..`).
+All paths are **project-relative** by default (no leading slash, no `..`).
+
+> **Absolute paths are allowed** (added in the Task 15.1 relaxation). If a field
+> starts with `/` it is used verbatim and **bypasses the project root** —
+> useful when the wiki lives outside the project directory, or you want to
+> point raw_sources at a shared inbox. Note: absolute paths make the
+> `paths.yaml` **non-portable across machines**; only use them when the
+> project stays on one machine.
 
 ## Common scenarios
 
@@ -104,6 +111,24 @@ paths:
 ```
 
 The project now uses `inbox/` for sources and `my-wiki/` for the generated pages, but the wiki subdirectory layout (`my-wiki/entities/`, `my-wiki/index.md`, …) is unchanged.
+
+### Point the wiki outside the project root (absolute paths)
+
+```yaml
+# .llm-wiki/paths.yaml  (or ~/.llm-wiki/paths.yaml for global)
+version: 1
+paths:
+  wiki_root: /home/me/notes/my-wiki
+  raw_sources: /home/me/Dropbox/inbox
+  schema:  /home/me/notes/my-wiki/schema.md
+  purpose: /home/me/notes/my-wiki/purpose.md
+  index:   /home/me/notes/my-wiki/index.md
+  log:     /home/me/notes/my-wiki/log.md
+  overview: /home/me/notes/my-wiki/overview.md
+```
+
+Absolute paths are stored verbatim; they do **not** get joined under the
+project root. `..` is still rejected.
 
 ### Set a cross-machine default
 

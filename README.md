@@ -359,7 +359,7 @@ The original has a hardcoded on-disk layout (`raw/`, `wiki/`, `purpose.md`, …)
 - **15 overridable fields** — every layout directory and top-level file
 - **Settings UI** — `Settings → Project paths` panel with a live form, Save, and Reset to defaults
 - **Atomic writes** — never a half-written yaml on disk (`tmp` + rename)
-- **Validation** — absolute paths and `..` traversal are rejected at `open_project` time
+- **Validation** — `..` traversal is rejected at `open_project` time. Absolute paths are accepted (Task 15.1 relaxation) and stored verbatim — useful for pointing the wiki outside the project root, but makes the yaml non-portable across machines.
 - **Schema versioning** — files with an incompatible `version:` are rejected; the project-level file is strict, the global file is lenient (just logs and ignores)
 - **No migration needed** — existing projects without a `paths.yaml` open unchanged
 
