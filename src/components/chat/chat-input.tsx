@@ -3,7 +3,7 @@ import { FileSearch, Globe2, Send, Square } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { isImeComposing } from "@/lib/keyboard-utils"
+import { shouldBlockKeyDown } from "@/lib/keyboard-utils"
 
 export interface ChatSendOptions {
   useWebSearch: boolean
@@ -23,11 +23,27 @@ export function ChatInput({ onSend, onStop, isStreaming, anyTxtAvailable = true,
   const [value, setValue] = useState("")
   const [useWebSearch, setUseWebSearch] = useState(false)
   const [useAnyTxtSearch, setUseAnyTxtSearch] = useState(false)
+  // Explicit React-level IME composition state. The per-event
+  // `isComposing` flag and `keyCode === 229` on keydown are NOT
+  // reliable in every webview (notably Tauri WebKitGTK on Linux),
+  // so we additionally track composition via the
+  // `onCompositionStart` / `onCompositionEnd` handlers below and
+  // OR it into the keydown check. See `shouldBlockKeyDown` in
+  // `lib/keyboard-utils.ts` for the full rationale.
+  const [isComposing, setIsComposing] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (!anyTxtAvailable) setUseAnyTxtSearch(false)
   }, [anyTxtAvailable])
+
+  const handleCompositionStart = useCallback(() => {
+    setIsComposing(true)
+  }, [])
+
+  const handleCompositionEnd = useCallback(() => {
+    setIsComposing(false)
+  }, [])
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value)
@@ -52,13 +68,20 @@ export function ChatInput({ onSend, onStop, isStreaming, anyTxtAvailable = true,
       // the user is mid-composition (Chinese / Japanese / Korean
       // input method picking an English word or phrase) and would
       // see the message fire before they finished typing.
-      if (isImeComposing(e)) return
+      //
+      // `shouldBlockKeyDown` checks BOTH the explicit React-level
+      // `isComposing` state (driven by onCompositionStart / End)
+      // AND the per-event `isComposing` / `keyCode === 229` signals,
+      // so we still block correctly even if a webview (e.g. Tauri
+      // WebKitGTK on Linux) omits the per-event signal on the
+      // commit-press.
+      if (shouldBlockKeyDown(isComposing, e)) return
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault()
         handleSend()
       }
     },
-    [handleSend],
+    [isComposing, handleSend],
   )
 
   const searchToggleClass = (active: boolean) =>
@@ -77,6 +100,8 @@ export function ChatInput({ onSend, onStop, isStreaming, anyTxtAvailable = true,
           dir="auto"
           onChange={handleInput}
           onKeyDown={handleKeyDown}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           placeholder={placeholder ?? "Type a message... (Enter to send, Shift+Enter for newline)"}
           disabled={isStreaming}
           rows={1}

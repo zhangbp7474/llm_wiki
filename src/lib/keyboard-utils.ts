@@ -22,3 +22,33 @@
 export function isImeComposing(e: React.KeyboardEvent): boolean {
   return e.nativeEvent.isComposing || e.keyCode === 229
 }
+
+/**
+ * Returns true if a keydown event should be BLOCKED from triggering
+ * a "submit on Enter" handler because the user is mid-IME composition
+ * (typing under a Chinese / Japanese / Korean input method).
+ *
+ * Why a separate function from `isImeComposing`:
+ *   `isImeComposing` only inspects the per-event signals
+ *   (`nativeEvent.isComposing`, `keyCode === 229`). Those signals are
+ *   NOT reliable in every webview — historically Tauri WebKitGTK on
+ *   Linux has been known to omit them on the Enter that commits a
+ *   candidate, which leaks the submit through before the user has
+ *   finished typing.
+ *
+ *   This function is meant to be paired with explicit React state
+ *   `isComposing` driven by `onCompositionStart` / `onCompositionEnd`
+ *   on the input. With that state, the `isComposing || isImeComposing(e)`
+ *   short-circuit is a defense-in-depth check: even if the per-event
+ *   signal is missing, the React-level state is still true during
+ *   composition and blocks the submit.
+ *
+ * Use this in every Enter-as-submit handler on a text input.
+ */
+export function shouldBlockKeyDown(
+  isComposing: boolean,
+  e: React.KeyboardEvent,
+): boolean {
+  if (isComposing) return true
+  return isImeComposing(e)
+}
