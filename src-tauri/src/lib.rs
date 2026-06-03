@@ -88,6 +88,29 @@ pub fn run() {
             } else {
                 eprintln!("[proxy] could not resolve app_data_dir");
             }
+            // Global `paths.yaml` override (Task 5). Like the proxy
+            // block above, this is read at startup and logged — but
+            // a bad/missing file is never fatal. The app must still
+            // launch with built-in defaults.
+            match app.path().app_data_dir() {
+                Ok(dir) => {
+                    match path_config::load_global_yaml_at(&dir) {
+                        Ok(Some(file)) => {
+                            let overrides = file.paths != path_config::Paths::default();
+                            eprintln!(
+                                "[path_config] loaded global paths.yaml (has overrides: {overrides})"
+                            );
+                        }
+                        Ok(None) => {
+                            eprintln!("[path_config] no global paths.yaml; using built-in defaults");
+                        }
+                        Err(e) => {
+                            eprintln!("[path_config] failed to read global paths.yaml: {e}");
+                        }
+                    }
+                }
+                Err(e) => eprintln!("[path_config] could not resolve app_data_dir: {e}"),
+            }
             // Registry of running `claude` subprocesses, keyed by the
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.

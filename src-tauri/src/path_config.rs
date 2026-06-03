@@ -268,6 +268,40 @@ pub fn save_project_yaml(
     Ok(())
 }
 
+/// Load the global `paths.yaml` from `<app_data_dir>/paths.yaml`.
+///
+/// This is the "across-all-projects" override file. Differs from
+/// `load_project_yaml` in two important ways:
+///   1. **Lenient on version mismatch** — if the on-disk version is
+///      not `CURRENT_SCHEMA_VERSION`, we log to stderr and return
+///      `Ok(None)` (i.e. "treat as no override"). The project-level
+///      loader treats version mismatch as a hard error; the global
+///      loader is more forgiving because a bad global file would
+///      break ALL projects, and a stale global from a previous app
+///      version is much more common than a stale per-project file.
+///   2. **Path is the dir itself**, not a `.llm-wiki/` subdir — the
+///      global file lives at the top of `app_data_dir` to mirror
+///      `tauri-plugin-store`'s `app-state.json` convention.
+pub fn load_global_yaml_at(
+    app_data_dir: &Path,
+) -> Result<Option<PathsFile>, PathConfigError> {
+    let p = app_data_dir.join("paths.yaml");
+    if !p.exists() {
+        return Ok(None);
+    }
+    let s = std::fs::read_to_string(&p).map_err(|e| PathConfigError::Io(e.to_string()))?;
+    let file: PathsFile =
+        serde_yaml::from_str(&s).map_err(|e| PathConfigError::Yaml(e.to_string()))?;
+    if file.version != CURRENT_SCHEMA_VERSION {
+        eprintln!(
+            "[path_config] global paths.yaml schema v{} (expected v{}); ignoring",
+            file.version, CURRENT_SCHEMA_VERSION
+        );
+        return Ok(None);
+    }
+    Ok(Some(file))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +441,18 @@ paths:
         save_project_yaml(&dir, &cfg).unwrap();
         let loaded = load_project_yaml(&dir).unwrap().unwrap();
         assert_eq!(loaded.paths.raw_sources, PathBuf::from("docs/inbox"));
+    }
+
+    #[test]
+    fn load_global_yaml_at_custom_path() {
+        let dir = tempdir_unique("pc-global");
+        std::fs::write(
+            dir.join("paths.yaml"),
+            "version: 1\npaths:\n  raw_sources: g/inbox\n",
+        )
+        .unwrap();
+        let result = load_global_yaml_at(&dir).unwrap().unwrap();
+        assert_eq!(result.paths.raw_sources, PathBuf::from("g/inbox"));
     }
 
     /// Test-only helper: create a uniquely-named temp dir under
