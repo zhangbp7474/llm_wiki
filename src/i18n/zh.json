@@ -374,7 +374,8 @@
         "searxngCategoriesHint": "分类会作为 SearXNG 的 `categories` 参数发送。",
         "searchEngine": "搜索引擎 / 分类",
         "customSerpApiPlaceholder": "自定义 SerpApi engine，例如 google_finance",
-        "customSerpApiHint": "自定义 engine 会作为 SerpApi 的 `engine` 参数发送。"
+        "customSerpApiHint": "自定义 engine 会作为 SerpApi 的 `engine` 参数发送。",
+        "mmxInstallHint": "需在终端中安装 mmx-cli（`npm i -g mmx-cli`）并完成鉴权（`mmx auth login --api-key <key>`）。应用直接调用 PATH 上的二进制，此处无需填写 API Key。"
       },
       "network": {
         "title": "网络",

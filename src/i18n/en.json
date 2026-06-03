@@ -374,7 +374,8 @@
         "searxngCategoriesHint": "Categories are sent as the SearXNG `categories` parameter.",
         "searchEngine": "Search engine / category",
         "customSerpApiPlaceholder": "Custom SerpApi engine, e.g. google_finance",
-        "customSerpApiHint": "Custom engine will be sent as the SerpApi `engine` parameter."
+        "customSerpApiHint": "Custom engine will be sent as the SerpApi `engine` parameter.",
+        "mmxInstallHint": "mmx-cli must be installed (`npm i -g mmx-cli`) and authenticated (`mmx auth login --api-key <key>`) in a terminal. The app talks to the binary on PATH; no API key field is required here."
       },
       "network": {
         "title": "Network",

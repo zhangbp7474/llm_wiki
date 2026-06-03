@@ -7,6 +7,7 @@ import type {
 } from "@/stores/wiki-store"
 import { getHttpFetch, isFetchNetworkError } from "@/lib/tauri-fetch"
 import { hasConfiguredAnyTxt, normalizeAnyTxtConfig } from "@/lib/anytxt-search"
+import { mmxSearch as mmxSearchInvoke, type MmxSearchHit } from "@/lib/mmx"
 
 export interface WebSearchResult {
   title: string
@@ -114,6 +115,14 @@ export function hasConfiguredSearchProvider(config: SearchApiConfig): boolean {
   if (resolved.provider === "ollama") {
     return Boolean(resolved.apiKey?.trim())
   }
+  // mmx-cli authenticates from `~/.mmx/config.json` (set by
+  // `mmx auth login`), not from our apiKey field. The Rust side will
+  // surface a clear "mmx not installed" / "mmx not authenticated"
+  // error if the binary or token is missing, so we treat a selected
+  // mmx provider as "configured" without re-checking here.
+  if (resolved.provider === "mmx") {
+    return true
+  }
   return Boolean(resolved.apiKey?.trim())
 }
 
@@ -156,9 +165,61 @@ export async function webSearch(
       return searXngSearch(query, resolved.searXngUrl ?? "", maxResults, resolved.searXngCategories ?? ["general"])
     case "ollama":
       return ollamaSearch(query, resolved.apiKey ?? "", maxResults)
+    case "mmx":
+      return mmxWebSearch(query, maxResults)
     default:
       throw new Error(`Unknown search provider: ${resolved.provider}`)
   }
+}
+
+/**
+ * mmx-cli backed web search. mmx-cli's `search query` returns a
+ * MiniMax-shaped envelope (`{ organic: [{ title, link, snippet, date }, ...] }`).
+ * The Rust side (`src-tauri/src/commands/mmx.rs`) parses that envelope
+ * and returns a flat `MmxSearchHit[]`. We just adapt the field names
+ * to the existing `WebSearchResult` shape and apply the maxResults cap.
+ */
+async function mmxWebSearch(
+  query: string,
+  maxResults: number,
+): Promise<WebSearchResult[]> {
+  let hits: MmxSearchHit[]
+  try {
+    hits = await mmxSearchInvoke(query, { maxResults })
+  } catch (err) {
+    // mmx-cli's documented exit codes: 3 = auth, 4 = quota, 5 = timeout,
+    // 10 = content filter. Surface those as actionable messages so the
+    // user knows whether to re-auth (3), back off (4), or shorten the
+    // query (5 / 10).
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/not found on PATH/i.test(msg)) {
+      throw new Error(
+        "mmx-cli not found on PATH. Install it with `npm i -g mmx-cli` and restart the app.",
+      )
+    }
+    if (/exited with code.*\b3\b|auth/i.test(msg)) {
+      throw new Error(
+        "mmx-cli authentication failed. Run `mmx auth login --api-key <your-key>` in a terminal and try again.",
+      )
+    }
+    if (/exited with code.*\b4\b|quota/i.test(msg)) {
+      throw new Error(
+        "mmx-cli reported quota exceeded. Wait for the next window or upgrade your MiniMax plan.",
+      )
+    }
+    if (/exited with code.*\b5\b|timed out/i.test(msg)) {
+      throw new Error(
+        "mmx search timed out. Try a more specific query or increase the timeout in Settings.",
+      )
+    }
+    throw err
+  }
+  return hits.slice(0, maxResults).map((h) => ({
+    title: h.title,
+    url: h.url,
+    snippet: h.snippet,
+    source: h.source,
+  }))
 }
 
 function searXngSearchUrl(instanceUrl: string): URL {
