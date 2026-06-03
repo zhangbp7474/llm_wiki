@@ -12,6 +12,7 @@ import {
   Wrench,
   Clock,
   FolderSync,
+  FolderTree,
   Server,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
@@ -36,6 +37,7 @@ import { SourceWatchSection } from "./sections/source-watch-section"
 import { ApiServerSection } from "./sections/api-server-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
+import { PathConfigSection } from "./sections/path-config-section"
 import { AboutSection } from "./sections/about-section"
 
 type CategoryId =
@@ -50,6 +52,7 @@ type CategoryId =
   | "output"
   | "interface"
   | "maintenance"
+  | "path-config"
   | "changelog"
   | "about"
 
@@ -74,6 +77,7 @@ const CATEGORIES: Category[] = [
   { id: "output", labelKey: "settings.categories.output", icon: Languages },
   { id: "interface", labelKey: "settings.categories.interface", icon: Palette },
   { id: "maintenance", labelKey: "settings.categories.maintenance", icon: Wrench },
+  { id: "path-config", labelKey: "settings.categories.pathConfig", icon: FolderTree },
   { id: "changelog", labelKey: "settings.categories.changelog", icon: History },
   { id: "about", labelKey: "settings.categories.about", icon: Info },
 ]
@@ -438,6 +442,8 @@ export function SettingsView() {
         return <InterfaceSection draft={draft} setDraft={setDraft} />
       case "maintenance":
         return <MaintenanceSection />
+      case "path-config":
+        return <PathConfigSection />
       case "changelog":
         return <ChangelogSection />
       case "about":

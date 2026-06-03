@@ -23,6 +23,18 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `path_config` (see docs/plans/2026-06-01-configurable-paths.md) parses
+# user-provided `paths.yaml` files to override the built-in default
+# project layout (raw/sources, wiki/entities, etc.). serde_yaml gives
+# us serde-driven deserialization of the project's `Paths` / `PathsFile`
+# structs without pulling in a separate YAML lib.
+serde_yaml = "0.9"
+# `thiserror` gives us `#[derive(Error)]` for the `PathConfigError`
+# enum in src/path_config.rs. The crate is already a transitive dep
+# (via tauri / reqwest), but using a transitive dep directly is bad
+# practice — pulling it in as a first-class dep lets the version
+# stay explicit.
+thiserror = "1"
 chrono = { version = "0.4", features = ["clock"] }
 tauri-plugin-dialog = "2.7.1"
 pdfium-render = "0.9"

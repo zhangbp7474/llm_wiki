@@ -2,7 +2,9 @@ mod api_server;
 mod clip_server;
 mod commands;
 mod panic_guard;
+mod path_config;
 mod proxy;
+mod state;
 mod types;
 
 use panic_guard::run_guarded;
@@ -87,6 +89,34 @@ pub fn run() {
             } else {
                 eprintln!("[proxy] could not resolve app_data_dir");
             }
+            // Global `paths.yaml` override (Task 5). Like the proxy
+            // block above, this is read at startup and logged — but
+            // a bad/missing file is never fatal. The app must still
+            // launch with built-in defaults.
+            match app.path().app_data_dir() {
+                Ok(dir) => {
+                    match path_config::load_global_yaml_at(&dir) {
+                        Ok(Some(file)) => {
+                            let overrides = file.paths != path_config::Paths::default();
+                            eprintln!(
+                                "[path_config] loaded global paths.yaml (has overrides: {overrides})"
+                            );
+                        }
+                        Ok(None) => {
+                            eprintln!("[path_config] no global paths.yaml; using built-in defaults");
+                        }
+                        Err(e) => {
+                            eprintln!("[path_config] failed to read global paths.yaml: {e}");
+                        }
+                    }
+                }
+                Err(e) => eprintln!("[path_config] could not resolve app_data_dir: {e}"),
+            }
+            // ProjectPathsCache (Task 7). Registered as Tauri
+            // managed state so commands can read the currently-open
+            // project's resolved layout via `tauri::State`. Starts
+            // empty; `open_project` / `create_project` populate it.
+            app.manage(state::ProjectPathsCache::new());
             // Registry of running `claude` subprocesses, keyed by the
             // frontend-generated stream id. Populated by claude_cli_spawn,
             // drained on process exit or by claude_cli_kill.
@@ -115,6 +145,11 @@ pub fn run() {
             commands::project::create_project,
             commands::project::open_project,
             commands::project::open_project_folder,
+            // path_config IPC surface (Task 10): read / write /
+            // reset the project's `.llm-wiki/paths.yaml`.
+            commands::path_config_cmd::get_path_config,
+            commands::path_config_cmd::set_path_config,
+            commands::path_config_cmd::reset_path_config,
             commands::search::search_project,
             clip_server_status,
             api_server_status,

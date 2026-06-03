@@ -350,6 +350,21 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 - **15 分钟超时** —— 长时间摄入操作不会过早失败
 - **dataVersion 信号** —— 图谱和 UI 在 Wiki 内容变更时自动刷新
 
+### 19. 可自定义项目路径
+
+原版采用硬编码的目录结构（`raw/`、`wiki/`、`purpose.md` 等）。我们通过一个可选的 YAML 文件让用户可以覆盖：
+
+- **双层配置** — 项目级 `<project>/.llm-wiki/paths.yaml`（最高优先级）和全局 `<app_data_dir>/paths.yaml`（跨项目默认）
+- **三层回退** — 项目 → 全局 → 内置默认，字段级别合并
+- **15 个可覆盖字段** — 涵盖所有布局目录和顶层文件
+- **设置 UI** — `Settings → Project paths` 面板，提供实时表单、保存和「恢复默认」按钮
+- **原子写入** — 磁盘上永远不会有写入一半的 yaml 文件（`tmp` + rename）
+- **校验** — `open_project` 时拒绝 `..` 越权。绝对路径已允许(Task 15.1 放宽)并原样保存——便于把 wiki 放到项目根之外,但 yaml 在跨机器时不通用。
+- **Schema 版本** — `version:` 不兼容的文件会被拒绝；项目级文件严格，全局文件宽松（仅记录日志后忽略）
+- **无需迁移** — 没有 `paths.yaml` 的旧项目直接正常打开
+
+最终用户文档见 [`docs/user/paths-yaml.md`](docs/user/paths-yaml.md)。设计原理见 [`docs/plans/2026-06-01-configurable-paths.md`](docs/plans/2026-06-01-configurable-paths.md)。
+
 ## 技术栈
 
 | 层级 | 技术 |

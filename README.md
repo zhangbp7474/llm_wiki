@@ -350,6 +350,21 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 - **15-minute timeout** — long ingest operations won't fail prematurely
 - **dataVersion signaling** — graph and UI automatically refresh when wiki content changes
 
+### 19. Customisable Project Paths
+
+The original has a hardcoded on-disk layout (`raw/`, `wiki/`, `purpose.md`, …). We make it user-overridable via an opt-in YAML file:
+
+- **Two layers** — project-level `<project>/.llm-wiki/paths.yaml` (highest priority) and global `<app_data_dir>/paths.yaml` (cross-project default)
+- **3-layer resolution** — project → global → built-in defaults, with field-level merging
+- **15 overridable fields** — every layout directory and top-level file
+- **Settings UI** — `Settings → Project paths` panel with a live form, Save, and Reset to defaults
+- **Atomic writes** — never a half-written yaml on disk (`tmp` + rename)
+- **Validation** — `..` traversal is rejected at `open_project` time. Absolute paths are accepted (Task 15.1 relaxation) and stored verbatim — useful for pointing the wiki outside the project root, but makes the yaml non-portable across machines.
+- **Schema versioning** — files with an incompatible `version:` are rejected; the project-level file is strict, the global file is lenient (just logs and ignores)
+- **No migration needed** — existing projects without a `paths.yaml` open unchanged
+
+For end-user docs see [`docs/user/paths-yaml.md`](docs/user/paths-yaml.md). For the design rationale see [`docs/plans/2026-06-01-configurable-paths.md`](docs/plans/2026-06-01-configurable-paths.md).
+
 ## Tech Stack
 
 | Layer | Technology |

@@ -11,7 +11,7 @@ use std::time::Duration;
 use md5::{Digest, Md5};
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use walkdir::WalkDir;
 
 use crate::panic_guard::run_guarded;
@@ -286,8 +286,23 @@ pub fn start_project_file_watcher(
         watcher
             .watch(&root, RecursiveMode::Recursive)
             .map_err(|e| format!("Failed to watch '{}': {e}", root.display()))?;
-        for rel in ["raw/sources", "wiki"] {
-            let path = root.join(rel);
+        // Supplemental watches: also watch the resolved raw_sources
+        // and wiki_root so the user gets events when the user renamed
+        // the wiki tree via paths.yaml. Falls back to built-in
+        // defaults if the cache hasn't been populated yet (e.g. a
+        // test that constructs FileSyncState without open_project).
+        let supplemental = app
+            .state::<crate::state::ProjectPathsCache>()
+            .get()
+            .unwrap_or_default();
+        for rel in [&supplemental.raw_sources, &supplemental.wiki_root] {
+            // Task 15.1: a rel may now be absolute (paths.yaml override).
+            // In that case skip the project-root join.
+            let path = if rel.is_absolute() {
+                rel.clone()
+            } else {
+                root.join(rel)
+            };
             if path.exists() {
                 if let Err(err) = watcher.watch(&path, RecursiveMode::Recursive) {
                     eprintln!(
@@ -521,6 +536,18 @@ fn rescan_watch_roots(
     enqueue_rescan_changes_for_prefixes(
         root,
         project_id,
+        // NOTE: this list of prefixes is still hardcoded. It feeds
+        // `enqueue_rescan_changes_for_prefixes(&[&str])` which has a
+        // hard slice-of-strs signature. A full fix would change that
+        // function to take an iterator of `Path`-like values, then
+        // build the slice from the resolved layout. For Task 9 the
+        // minimum viable change is the L289 supplemental-watches
+        // loop (above); the L533 prefix list is a follow-up. (The
+        // practical effect: a user who renames the wiki tree to
+        // "docs/wiki" still gets a rescan of the original
+        // "wiki"+"raw/sources" prefixes — they just won't see new
+        // files in "docs/wiki" until the user manually triggers a
+        // rescan. Tracked in Task 15.)
         &["raw/sources", "wiki", "purpose.md", "schema.md"],
         source_watch_config,
     )?;
