@@ -455,6 +455,60 @@ paths:
         assert_eq!(result.paths.raw_sources, PathBuf::from("g/inbox"));
     }
 
+    /// End-to-end integration test for Task 12: the IPC commands the
+    /// frontend PathConfigPanel calls (get / set / reset) ultimately
+    /// drive this load + save + resolve round-trip. This test is the
+    /// single place where the full chain is asserted in one go:
+    ///   1. Start with a fresh project dir (no yaml)
+    ///   2. Save a custom layout (front-end set_path_config)
+    ///   3. Reload the file (front-end get_path_config on next open)
+    ///   4. Resolve through the 3-layer pipeline (open_project does
+    ///      this in production)
+    ///   5. Verify the resolved layout reflects the custom paths
+    /// This is the closest the lib-level tests can get to a
+    /// true create + set + verify integration test; the actual
+    /// Tauri command layer is exercised manually in Task 15.
+    #[test]
+    fn integration_set_then_reload_then_resolve_uses_custom_layout() {
+        let dir = tempdir_unique("pc-integration");
+        let project_root = dir.join("my-project");
+        std::fs::create_dir_all(&project_root).unwrap();
+
+        // 1. Initial state: no yaml on disk. The simulated
+        //    open_project sees no project-level override.
+        let project_file = load_project_yaml(&project_root).unwrap();
+        assert!(project_file.is_none(), "fresh project should have no yaml");
+
+        // 2. Frontend calls set_path_config with a custom layout.
+        let custom = PathsFile {
+            version: CURRENT_SCHEMA_VERSION,
+            paths: Paths {
+                raw_sources: PathBuf::from("documents/inbox"),
+                wiki_root: PathBuf::from("notes/wiki"),
+                purpose: PathBuf::from("README.md"),
+                ..Paths::default()
+            },
+        };
+        save_project_yaml(&project_root, &custom).unwrap();
+
+        // 3. User reopens the project (or front-end re-fetches).
+        let reloaded = load_project_yaml(&project_root).unwrap().unwrap();
+        assert_eq!(reloaded.paths.raw_sources, PathBuf::from("documents/inbox"));
+        assert_eq!(reloaded.paths.wiki_root, PathBuf::from("notes/wiki"));
+        assert_eq!(reloaded.paths.purpose, PathBuf::from("README.md"));
+        // Unspecified fields should have been filled by serde default
+        assert_eq!(reloaded.paths.wiki_entities, PathBuf::from("wiki/entities"));
+
+        // 4 + 5. open_project then resolves through the 3-layer pipeline.
+        //    No global yaml in this temp dir, so the resolution is
+        //    just project + built-in default.
+        let resolved = resolve_paths(Some(&reloaded.paths), None).unwrap();
+        assert_eq!(resolved.raw_sources, PathBuf::from("documents/inbox"));
+        assert_eq!(resolved.wiki_root, PathBuf::from("notes/wiki"));
+        assert_eq!(resolved.purpose, PathBuf::from("README.md"));
+        assert_eq!(resolved.wiki_entities, PathBuf::from("wiki/entities"));
+    }
+
     /// Test-only helper: create a uniquely-named temp dir under
     /// `std::env::temp_dir()`. The atomic counter avoids collisions
     /// between parallel test threads.
