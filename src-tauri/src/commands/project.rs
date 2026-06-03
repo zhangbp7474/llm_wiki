@@ -3,42 +3,78 @@ use std::path::Path;
 
 use chrono::Local;
 use tauri::AppHandle;
+use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::panic_guard::run_guarded;
+use crate::path_config::{self, Paths};
 use crate::types::wiki::WikiProject;
 
-#[tauri::command]
-pub fn create_project(name: String, path: String) -> Result<WikiProject, String> {
-    run_guarded("create_project", || create_project_impl(name, path))
+/// Project directories that `create_project` materializes. Returned as
+/// `&Path` (a borrow into the resolved `Paths`) so we don't allocate
+/// one PathBuf per entry.
+fn dirs_from_paths(p: &Paths) -> Vec<&Path> {
+    vec![
+        p.raw_root.as_path(),
+        p.raw_assets.as_path(),
+        p.raw_sources.as_path(),
+        p.wiki_root.as_path(),
+        p.wiki_entities.as_path(),
+        p.wiki_concepts.as_path(),
+        p.wiki_sources.as_path(),
+        p.wiki_queries.as_path(),
+        p.wiki_comparisons.as_path(),
+        p.wiki_synthesis.as_path(),
+    ]
 }
 
-fn create_project_impl(name: String, path: String) -> Result<WikiProject, String> {
+#[tauri::command]
+pub fn create_project(
+    app: AppHandle,
+    name: String,
+    path: String,
+) -> Result<WikiProject, String> {
+    run_guarded("create_project", || {
+        create_project_impl(app, name, path)
+    })
+}
+
+fn create_project_impl(
+    app: AppHandle,
+    name: String,
+    path: String,
+) -> Result<WikiProject, String> {
     let root = Path::new(&path).join(&name);
 
     if root.exists() {
         return Err(format!("Directory already exists: '{}'", root.display()));
     }
 
-    // Create all required subdirectories
-    let dirs = [
-        "raw/sources",
-        "raw/assets",
-        "wiki/entities",
-        "wiki/concepts",
-        "wiki/sources",
-        "wiki/queries",
-        "wiki/comparisons",
-        "wiki/synthesis",
-    ];
-    for dir in &dirs {
-        fs::create_dir_all(root.join(dir))
-            .map_err(|e| format!("Failed to create directory '{}': {}", dir, e))?;
+    // Resolve the project layout for this newly-created project. We
+    // don't have a project-level yaml yet (we're creating it!), so
+    // `project = None`. The global yaml (if any) still applies, plus
+    // the built-in defaults.
+    let global = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|d| path_config::load_global_yaml_at(&d).ok().flatten())
+        .map(|f| f.paths);
+    let paths =
+        path_config::resolve_paths(None, global.as_ref()).map_err(|e| format!("path config: {e}"))?;
+
+    // Create all required subdirectories using the resolved layout
+    // (not the hardcoded array we used to ship).
+    for rel in dirs_from_paths(&paths) {
+        fs::create_dir_all(root.join(rel))
+            .map_err(|e| format!("Failed to create directory '{}': {}", rel.display(), e))?;
     }
 
     let today = Local::now().format("%Y-%m-%d").to_string();
 
-    // schema.md
+    // schema.md — the "Page Types / Directory" table is generated from
+    // the resolved layout so the file matches the actual on-disk
+    // directory structure even after a yaml override.
     let schema_content = format!(
         r#"# Wiki Schema
 
@@ -46,12 +82,16 @@ fn create_project_impl(name: String, path: String) -> Result<WikiProject, String
 
 | Type | Directory | Purpose |
 |------|-----------|---------|
-| entity | wiki/entities/ | Named things (models, companies, people, datasets) |
-| concept | wiki/concepts/ | Ideas, techniques, phenomena |
-| source | wiki/sources/ | Papers, articles, talks, blog posts |
-| query | wiki/queries/ | Open questions under investigation |
-| comparison | wiki/comparisons/ | Side-by-side analysis of related entities |
-| synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |
+| entity | {ents}/ | Named things (models, companies, people, datasets) |
+| concept | {concs}/ | Ideas, techniques, phenomena |
+| source | {srcs}/ | Papers, articles, talks, blog posts |
+| query | {qrys}/ | Open questions under investigation |
+| comparison | {cmps}/ | Side-by-side analysis of related entities |
+| synthesis | {syns}/ | Cross-cutting summaries and conclusions |
+
+> If you have an existing project, this template's directory list
+> reflects the **built-in default** layout. Your actual layout is
+> whatever you (or your project's `paths.yaml`) configured.
 
 ## Naming Conventions
 
@@ -86,14 +126,14 @@ venue: ""
 
 ## Index Format
 
-`wiki/index.md` lists all pages grouped by type. Each entry:
+`{idx}` lists all pages grouped by type. Each entry:
 ```
 - [[page-slug]] — one-line description
 ```
 
 ## Log Format
 
-`wiki/log.md` records research activity in reverse chronological order:
+`{log}` records research activity in reverse chronological order:
 ```
 ## YYYY-MM-DD
 
@@ -103,7 +143,7 @@ venue: ""
 ## Cross-referencing Rules
 
 - Use `[[page-slug]]` syntax to link between wiki pages
-- Every entity and concept should appear in `wiki/index.md`
+- Every entity and concept should appear in `{idx}`
 - Queries link to the sources and concepts they draw on
 - Synthesis pages cite all contributing sources via `related:`
 
@@ -114,9 +154,17 @@ When sources contradict each other:
 2. Create or update a query page to track the open question
 3. Link both sources from the query page
 4. Resolve in a synthesis page once sufficient evidence exists
-"#
+"#,
+        ents = paths.wiki_entities.display(),
+        concs = paths.wiki_concepts.display(),
+        srcs = paths.wiki_sources.display(),
+        qrys = paths.wiki_queries.display(),
+        cmps = paths.wiki_comparisons.display(),
+        syns = paths.wiki_synthesis.display(),
+        idx = paths.index.display(),
+        log = paths.log.display(),
     );
-    write_file_inner(root.join("schema.md"), &schema_content)?;
+    write_file_inner(root.join(&paths.schema), &schema_content)?;
 
     // purpose.md
     let purpose_content = r#"# Project Purpose
@@ -149,9 +197,9 @@ When sources contradict each other:
 
 > TBD
 "#;
-    write_file_inner(root.join("purpose.md"), purpose_content)?;
+    write_file_inner(root.join(&paths.purpose), purpose_content)?;
 
-    // wiki/index.md
+    // index.md
     let index_content = r#"# Wiki Index
 
 ## Entities
@@ -166,9 +214,9 @@ When sources contradict each other:
 
 ## Synthesis
 "#;
-    write_file_inner(root.join("wiki/index.md"), index_content)?;
+    write_file_inner(root.join(&paths.index), index_content)?;
 
-    // wiki/log.md
+    // log.md
     let log_content = format!(
         r#"# Research Log
 
@@ -177,9 +225,9 @@ When sources contradict each other:
 - Project created
 "#
     );
-    write_file_inner(root.join("wiki/log.md"), &log_content)?;
+    write_file_inner(root.join(&paths.log), &log_content)?;
 
-    // wiki/overview.md
+    // overview.md
     let overview_content = r#"---
 type: overview
 title: Project Overview
@@ -191,15 +239,17 @@ related: []
 
 <!-- Provide a high-level summary of what this wiki covers and its current state. Update regularly as understanding deepens. -->
 "#;
-    write_file_inner(root.join("wiki/overview.md"), overview_content)?;
+    write_file_inner(root.join(&paths.overview), overview_content)?;
 
     // .obsidian config for Obsidian compatibility
     fs::create_dir_all(root.join(".obsidian"))
         .map_err(|e| format!("Failed to create .obsidian: {}", e))?;
 
-    // Obsidian app config: set attachment folder, exclude hidden dirs
-    let obsidian_app_config = r#"{
-  "attachmentFolderPath": "raw/assets",
+    // Obsidian app config: set attachment folder (from resolved
+    // layout), exclude hidden dirs
+    let obsidian_app_config = format!(
+        r#"{{
+  "attachmentFolderPath": "{assets}",
   "userIgnoreFilters": [
     ".cache",
     ".llm-wiki",
@@ -208,8 +258,10 @@ related: []
   "useMarkdownLinks": false,
   "newLinkFormat": "shortest",
   "showUnsupportedFiles": false
-}"#;
-    write_file_inner(root.join(".obsidian/app.json"), obsidian_app_config)?;
+}}"#,
+        assets = paths.raw_assets.display(),
+    );
+    write_file_inner(root.join(".obsidian/app.json"), &obsidian_app_config)?;
 
     // Obsidian appearance: dark mode
     let obsidian_appearance = r#"{
