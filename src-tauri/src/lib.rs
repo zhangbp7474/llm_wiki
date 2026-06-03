@@ -2,6 +2,7 @@ mod api_server;
 mod clip_server;
 mod commands;
 mod panic_guard;
+mod path_config;
 mod proxy;
 mod types;
 
