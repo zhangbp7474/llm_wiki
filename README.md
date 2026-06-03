@@ -354,7 +354,7 @@ The original is platform-agnostic (abstract pattern). We handle concrete cross-p
 
 The original has a hardcoded on-disk layout (`raw/`, `wiki/`, `purpose.md`, …). We make it user-overridable via an opt-in YAML file:
 
-- **Two layers** — project-level `<project>/.llm-wiki/paths.yaml` (highest priority) and global `<app_data_dir>/paths.yaml` (cross-project default)
+- **Two layers** — project-level `<project>/path.yaml` (highest priority) and global `<app_data_dir>/paths.yaml` (cross-project default)
 - **3-layer resolution** — project → global → built-in defaults, with field-level merging
 - **15 overridable fields** — every layout directory and top-level file
 - **Settings UI** — `Settings → Project paths` panel with a live form, Save, and Reset to defaults
