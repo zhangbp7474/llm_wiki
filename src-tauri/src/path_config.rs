@@ -3,7 +3,7 @@
 //! See `docs/plans/2026-06-01-configurable-paths.md` for the design.
 //!
 //! Two file levels are supported:
-//!   1. **Project-level** — `<project_root>/.llm-wiki/paths.yaml` (per-project override)
+//!   1. **Project-level** — `<project_root>/path.yaml` (per-project override)
 //!   2. **Global**       — `<app_data_dir>/paths.yaml` (cross-project default)
 //!
 //! Resolution order for each path key (see `resolve_paths` in Task 3):
@@ -76,7 +76,7 @@ impl Default for Paths {
     }
 }
 
-/// On-disk structure of `<project_root>/.llm-wiki/paths.yaml` and
+/// On-disk structure of `<project_root>/path.yaml` and
 /// `<app_data_dir>/paths.yaml`. The `version` field is checked against
 /// `CURRENT_SCHEMA_VERSION` on load; `paths` holds the (possibly
 /// partial) override that the user wrote.
@@ -243,7 +243,7 @@ pub fn resolve_paths(
 // ---------------------------------------------------------------------------
 
 /// Load the project-level `paths.yaml` from
-/// `<project_root>/.llm-wiki/paths.yaml`.
+/// `<project_root>/path.yaml`.
 ///
 /// - `Ok(None)`  — file does not exist; caller should fall back to the
 ///                 next layer (global, then built-in default).
@@ -253,7 +253,7 @@ pub fn resolve_paths(
 ///                 a hard error (caller rejects the project); the
 ///                 global file is more lenient (Task 5).
 pub fn load_project_yaml(project_root: &Path) -> Result<Option<PathsFile>, PathConfigError> {
-    let p = project_root.join(".llm-wiki/paths.yaml");
+    let p = project_root.join("path.yaml");
     if !p.exists() {
         return Ok(None);
     }
@@ -266,20 +266,18 @@ pub fn load_project_yaml(project_root: &Path) -> Result<Option<PathsFile>, PathC
     Ok(Some(file))
 }
 
-/// Save a `PathsFile` to `<project_root>/.llm-wiki/paths.yaml`,
-/// creating the `.llm-wiki` directory if needed. The write is
-/// atomic — we serialize to a `.tmp` sibling then `rename` over the
-/// target, so a half-written file can never appear on disk.
+/// Save a `PathsFile` to `<project_root>/path.yaml`. The write is
+/// atomic — we serialize to a `.tmp` sibling in the same directory
+/// then `rename` over the target, so a half-written file can never
+/// appear on disk.
 pub fn save_project_yaml(
     project_root: &Path,
     file: &PathsFile,
 ) -> Result<(), PathConfigError> {
-    let dir = project_root.join(".llm-wiki");
-    std::fs::create_dir_all(&dir).map_err(|e| PathConfigError::Io(e.to_string()))?;
     let s = serde_yaml::to_string(file).map_err(|e| PathConfigError::Yaml(e.to_string()))?;
-    let tmp = dir.join("paths.yaml.tmp");
+    let tmp = project_root.join("path.yaml.tmp");
     std::fs::write(&tmp, s).map_err(|e| PathConfigError::Io(e.to_string()))?;
-    std::fs::rename(&tmp, dir.join("paths.yaml"))
+    std::fs::rename(&tmp, project_root.join("path.yaml"))
         .map_err(|e| PathConfigError::Io(e.to_string()))?;
     Ok(())
 }
@@ -439,9 +437,8 @@ paths:
     #[test]
     fn load_project_yaml_present_parses() {
         let dir = tempdir_unique("pc-present");
-        std::fs::create_dir_all(dir.join(".llm-wiki")).unwrap();
         std::fs::write(
-            dir.join(".llm-wiki/paths.yaml"),
+            dir.join("path.yaml"),
             "version: 1\npaths:\n  raw_sources: docs/inbox\n",
         )
         .unwrap();
@@ -453,9 +450,8 @@ paths:
     #[test]
     fn load_project_yaml_unsupported_version_fails() {
         let dir = tempdir_unique("pc-version");
-        std::fs::create_dir_all(dir.join(".llm-wiki")).unwrap();
         std::fs::write(
-            dir.join(".llm-wiki/paths.yaml"),
+            dir.join("path.yaml"),
             "version: 999\npaths: {}\n",
         )
         .unwrap();

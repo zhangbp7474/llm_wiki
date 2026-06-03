@@ -249,7 +249,7 @@ function Header({ t }: { t: ReturnType<typeof useTranslation>["t"] }) {
       <p className="mt-1 text-sm text-muted-foreground">
         {t("settings.sections.pathConfig.description", {
           defaultValue:
-            "Override the on-disk layout for this project. Writes to .llm-wiki/paths.yaml inside the project. Useful for fitting an existing folder structure or moving the wiki into a subfolder.",
+            "Override the on-disk layout for this project. Writes to path.yaml at the project root. Useful for fitting an existing folder structure or moving the wiki into a subfolder.",
         })}
       </p>
     </div>

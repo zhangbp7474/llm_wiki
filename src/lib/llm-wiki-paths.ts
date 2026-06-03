@@ -40,7 +40,7 @@ export interface PathsFile {
 export const CURRENT_SCHEMA_VERSION = 1
 
 /** Built-in default Paths — also returned by `getPathConfig` when the
- *  project has no `.llm-wiki/paths.yaml`. */
+ *  project has no `path.yaml`. */
 export const DEFAULT_PATHS: Paths = {
   rawRoot: "raw",
   rawAssets: "raw/assets",
