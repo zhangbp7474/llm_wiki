@@ -146,7 +146,7 @@ pub fn run() {
             commands::project::open_project,
             commands::project::open_project_folder,
             // path_config IPC surface (Task 10): read / write /
-            // reset the project's `.llm-wiki/paths.yaml`.
+            // reset the project's `path.yaml`.
             commands::path_config_cmd::get_path_config,
             commands::path_config_cmd::set_path_config,
             commands::path_config_cmd::reset_path_config,
