@@ -12,7 +12,7 @@
 //! Safety: resolved paths must be project-relative and must not contain
 //! `..` traversal. This is enforced by `validate` (Task 3).
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Schema version of the on-disk `paths.yaml` file. Bumped when the
@@ -94,6 +94,134 @@ pub struct PathsFile {
 pub static DEFAULT_PATHS: std::sync::LazyLock<Paths> =
     std::sync::LazyLock::new(Paths::default);
 
+// ---------------------------------------------------------------------------
+// Resolution (Task 3)
+// ---------------------------------------------------------------------------
+
+/// Errors produced by `resolve_paths` and the loaders in Task 4/5.
+///
+/// `Serialize, Deserialize` so it can cross the Tauri command boundary
+/// as a structured value when a frontend calls a `path_config` command
+/// (Task 10) and gets back a validation error.
+#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
+pub enum PathConfigError {
+    #[error("path '{0}' must be relative and not contain '..'")]
+    UnsafePath(String),
+    #[error("path '{0}' is absolute; only project-relative paths are allowed")]
+    AbsolutePath(String),
+    #[error("io: {0}")]
+    Io(String),
+    #[error("yaml: {0}")]
+    Yaml(String),
+    #[error("unsupported schema version {0} (expected {CURRENT_SCHEMA_VERSION})")]
+    UnsupportedVersion(u32),
+}
+
+/// Reject any path that is absolute or contains a `..` component.
+/// Both are unsafe in the context of project-relative layouts because
+/// they could escape the project root.
+fn validate(path: &Path) -> Result<(), PathConfigError> {
+    if path.is_absolute() {
+        return Err(PathConfigError::AbsolutePath(path.display().to_string()));
+    }
+    for c in path.components() {
+        if matches!(c, Component::ParentDir) {
+            return Err(PathConfigError::UnsafePath(path.display().to_string()));
+        }
+    }
+    Ok(())
+}
+
+/// Pick the most specific value for a single path key, layered as:
+///   1. project override (if the user wrote something non-default)
+///   2. global override   (if the user wrote something non-default)
+///   3. built-in default
+///
+/// KNOWN LIMITATION (called out in the plan, fixed in Task 15): the
+/// "is the user override?" signal is "differs from default". So a user
+/// who explicitly writes `raw_sources: raw/sources` (matching the
+/// built-in default) will get the global override instead. The fix is
+/// to track per-field "set vs unset" via `Option<PathBuf>`; deferred
+/// to Task 15 per the plan.
+fn pick(project: &Path, global: &Path, default: &Path) -> PathBuf {
+    if project != default {
+        project.to_path_buf()
+    } else if global != default {
+        global.to_path_buf()
+    } else {
+        default.to_path_buf()
+    }
+}
+
+/// Resolve the final `Paths` for an open project by layering the
+/// project-level override, the global override, and the built-in
+/// default. Validates every resulting path before returning.
+///
+/// `project = None` means no project-level yaml (or absent file).
+/// `global = None`  means no global yaml (or absent file). Either
+/// `None` falls through to the next layer.
+pub fn resolve_paths(
+    project: Option<&Paths>,
+    global: Option<&Paths>,
+) -> Result<Paths, PathConfigError> {
+    let defaults = Paths::default();
+    let global = global.unwrap_or(&defaults);
+    let project = project.unwrap_or(&defaults);
+
+    // Step 1: take the project override verbatim (it already has the
+    // global + default filled in by serde for unspecified fields).
+    let project_view = Paths {
+        raw_root: project.raw_root.clone(),
+        raw_assets: project.raw_assets.clone(),
+        raw_sources: project.raw_sources.clone(),
+        wiki_root: project.wiki_root.clone(),
+        wiki_entities: project.wiki_entities.clone(),
+        wiki_concepts: project.wiki_concepts.clone(),
+        wiki_sources: project.wiki_sources.clone(),
+        wiki_queries: project.wiki_queries.clone(),
+        wiki_comparisons: project.wiki_comparisons.clone(),
+        wiki_synthesis: project.wiki_synthesis.clone(),
+        index: project.index.clone(),
+        log: project.log.clone(),
+        overview: project.overview.clone(),
+        schema: project.schema.clone(),
+        purpose: project.purpose.clone(),
+    };
+
+    // Step 2: for each field, pick (project, global, default) using
+    // the != default heuristic.
+    let resolved = Paths {
+        raw_root: pick(&project_view.raw_root, &global.raw_root, &defaults.raw_root),
+        raw_assets: pick(&project_view.raw_assets, &global.raw_assets, &defaults.raw_assets),
+        raw_sources: pick(&project_view.raw_sources, &global.raw_sources, &defaults.raw_sources),
+        wiki_root: pick(&project_view.wiki_root, &global.wiki_root, &defaults.wiki_root),
+        wiki_entities: pick(&project_view.wiki_entities, &global.wiki_entities, &defaults.wiki_entities),
+        wiki_concepts: pick(&project_view.wiki_concepts, &global.wiki_concepts, &defaults.wiki_concepts),
+        wiki_sources: pick(&project_view.wiki_sources, &global.wiki_sources, &defaults.wiki_sources),
+        wiki_queries: pick(&project_view.wiki_queries, &global.wiki_queries, &defaults.wiki_queries),
+        wiki_comparisons: pick(&project_view.wiki_comparisons, &global.wiki_comparisons, &defaults.wiki_comparisons),
+        wiki_synthesis: pick(&project_view.wiki_synthesis, &global.wiki_synthesis, &defaults.wiki_synthesis),
+        index: pick(&project_view.index, &global.index, &defaults.index),
+        log: pick(&project_view.log, &global.log, &defaults.log),
+        overview: pick(&project_view.overview, &global.overview, &defaults.overview),
+        schema: pick(&project_view.schema, &global.schema, &defaults.schema),
+        purpose: pick(&project_view.purpose, &global.purpose, &defaults.purpose),
+    };
+
+    // Step 3: validate every resolved path.
+    for p in [
+        &resolved.raw_root, &resolved.raw_assets, &resolved.raw_sources,
+        &resolved.wiki_root, &resolved.wiki_entities, &resolved.wiki_concepts,
+        &resolved.wiki_sources, &resolved.wiki_queries, &resolved.wiki_comparisons,
+        &resolved.wiki_synthesis, &resolved.index, &resolved.log,
+        &resolved.overview, &resolved.schema, &resolved.purpose,
+    ] {
+        validate(p)?;
+    }
+
+    Ok(resolved)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +263,54 @@ paths:
         assert_eq!(parsed.paths.wiki_concepts, PathBuf::from("wiki/concepts"));
         assert_eq!(parsed.paths.wiki_root, PathBuf::from("wiki"));
         assert_eq!(parsed.paths.purpose, PathBuf::from("purpose.md"));
+    }
+
+    #[test]
+    fn resolve_uses_project_override_when_present() {
+        let project = Paths {
+            raw_sources: PathBuf::from("docs/inbox"),
+            ..Paths::default()
+        };
+        let global = Paths::default();
+        let resolved = resolve_paths(Some(&project), Some(&global)).unwrap();
+        assert_eq!(resolved.raw_sources, PathBuf::from("docs/inbox"));
+        // unspecified → global (which here equals default)
+        assert_eq!(resolved.wiki_entities, PathBuf::from("wiki/entities"));
+    }
+
+    #[test]
+    fn resolve_falls_back_to_global_when_no_project() {
+        let global = Paths {
+            raw_sources: PathBuf::from("g/in"),
+            ..Paths::default()
+        };
+        let resolved = resolve_paths(None, Some(&global)).unwrap();
+        assert_eq!(resolved.raw_sources, PathBuf::from("g/in"));
+    }
+
+    #[test]
+    fn resolve_falls_back_to_default_when_nothing() {
+        let resolved = resolve_paths(None, None).unwrap();
+        assert_eq!(resolved.raw_sources, PathBuf::from("raw/sources"));
+    }
+
+    #[test]
+    fn resolve_rejects_parent_traversal() {
+        let bad = Paths {
+            raw_sources: PathBuf::from("../escape"),
+            ..Paths::default()
+        };
+        let result = resolve_paths(Some(&bad), None);
+        assert!(result.is_err(), "must reject '..' in paths");
+    }
+
+    #[test]
+    fn resolve_rejects_absolute_paths() {
+        let bad = Paths {
+            raw_sources: PathBuf::from("/etc/passwd"),
+            ..Paths::default()
+        };
+        let result = resolve_paths(Some(&bad), None);
+        assert!(result.is_err());
     }
 }

@@ -4456,6 +4456,7 @@ dependencies = [
  "tauri-plugin-http",
  "tauri-plugin-opener",
  "tauri-plugin-store",
+ "thiserror 1.0.69",
  "tiny_http",
  "tokio",
  "uuid",
