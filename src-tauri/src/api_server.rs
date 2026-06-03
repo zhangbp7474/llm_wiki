@@ -13,7 +13,7 @@ use tauri::{AppHandle, Manager};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 use walkdir::WalkDir;
 
-use crate::{clip_server, commands};
+use crate::{clip_server, commands, path_config, state::ProjectPathsCache};
 
 const PORT: u16 = 19828;
 const API_PREFIX: &str = "/api/v1";
@@ -659,6 +659,13 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         Ok(project) => project,
         Err(e) => return err(404, e),
     };
+    // Pull the resolved layout from the cache. A request that beats
+    // open_project to the cache is malformed — return 409 so the
+    // client knows to open the project first.
+    let paths = match app.state::<ProjectPathsCache>().get() {
+        Some(p) => p,
+        None => return err(409, "No project is open"),
+    };
     let params = parse_query(query);
     let root = params.get("root").map(String::as_str).unwrap_or("wiki");
     let recursive = params
@@ -670,14 +677,18 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_FILES)
         .clamp(1, HARD_MAX_FILES);
-    let rel = match root {
-        "wiki" => "wiki",
-        "sources" | "raw" | "raw/sources" => "raw/sources",
-        "all" | "" => "",
+    // Map the public `?root=` alias to the resolved project-relative
+    // path. The aliases are stable (frontend / external tools code
+    // against them), but the on-disk location tracks the user's
+    // paths.yaml override.
+    let rel: PathBuf = match root {
+        "wiki" => paths.wiki_root.clone(),
+        "sources" | "raw" | "raw/sources" => paths.raw_sources.clone(),
+        "all" | "" => PathBuf::new(),
         _ => return err(400, "root must be wiki, sources, or all"),
     };
-    if rel.is_empty() {
-        return match list_public_roots(&project.path, recursive, max_files) {
+    if rel.as_os_str().is_empty() {
+        return match list_public_roots(&project.path, &paths, recursive, max_files) {
             Ok(files) => ok(json!({
                 "ok": true,
                 "projectId": project.id,
@@ -688,7 +699,7 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
             Err(e) => err(if e.contains("exceeds") { 413 } else { 500 }, e),
         };
     }
-    let dir = match safe_join(&project.path, rel) {
+    let dir = match safe_join(&project.path, rel.as_os_str().to_str().unwrap_or("")) {
         Ok(path) => path,
         Err(e) => return err(400, e),
     };
@@ -697,7 +708,7 @@ fn handle_files(app: &AppHandle, project_id: &str, query: &str) -> ApiResponse {
         Ok(files) => ok(json!({
             "ok": true,
             "projectId": project.id,
-            "root": rel,
+            "root": root,
             "files": files,
             "truncated": false,
         })),
@@ -710,11 +721,17 @@ fn handle_file_content(app: &AppHandle, project_id: &str, query: &str) -> ApiRes
         Ok(project) => project,
         Err(e) => return err(404, e),
     };
+    // Pull the resolved layout for the whitelist check. Same 409
+    // behavior as handle_files.
+    let paths = match app.state::<ProjectPathsCache>().get() {
+        Some(p) => p,
+        None => return err(409, "No project is open"),
+    };
     let params = parse_query(query);
     let Some(rel) = params.get("path") else {
         return err(400, "Missing path query parameter");
     };
-    if !is_public_project_rel(rel) {
+    if !is_public_project_rel(rel, &paths) {
         return err(403, "Path is not exposed by the local API");
     }
     if !is_text_content_rel(rel) {
@@ -787,7 +804,7 @@ fn safe_join(project_path: &str, rel: &str) -> Result<PathBuf, String> {
     Ok(joined)
 }
 
-fn is_public_project_rel(rel: &str) -> bool {
+fn is_public_project_rel(rel: &str, paths: &path_config::Paths) -> bool {
     let rel = normalize_path(rel).trim_start_matches('/').to_string();
     if rel
         .split('/')
@@ -796,10 +813,23 @@ fn is_public_project_rel(rel: &str) -> bool {
         return false;
     }
     let lower = rel.to_lowercase();
-    lower == "purpose.md"
-        || lower == "schema.md"
-        || lower.starts_with("wiki/")
-        || lower.starts_with("raw/sources/")
+    // Whitelist is built from the resolved layout, not hardcoded
+    // "wiki" / "raw/sources" — a project that put its wiki at
+    // "docs/wiki" via paths.yaml is exposed under "docs/wiki/".
+    let wiki_prefix = format!(
+        "{}/",
+        paths.wiki_root.to_string_lossy().to_lowercase()
+    );
+    let raw_prefix = format!(
+        "{}/",
+        paths.raw_sources.to_string_lossy().to_lowercase()
+    );
+    let purpose = paths.purpose.to_string_lossy().to_lowercase();
+    let schema = paths.schema.to_string_lossy().to_lowercase();
+    lower == purpose
+        || lower == schema
+        || lower.starts_with(&wiki_prefix)
+        || lower.starts_with(&raw_prefix)
 }
 
 fn is_text_content_rel(rel: &str) -> bool {
@@ -836,13 +866,22 @@ struct ApiFileNode {
 
 fn list_public_roots(
     project_path: &str,
+    paths: &path_config::Paths,
     recursive: bool,
     max_files: usize,
 ) -> Result<Vec<ApiFileNode>, String> {
     let mut count = 0;
     let mut roots = Vec::new();
-    for rel in ["purpose.md", "schema.md", "wiki", "raw/sources"] {
-        let path = safe_join(project_path, rel)?;
+    // Public roots = the two top-level .md files + the wiki tree +
+    // the raw sources tree, all from the resolved layout.
+    let public_rels = [
+        paths.purpose.to_string_lossy().to_string(),
+        paths.schema.to_string_lossy().to_string(),
+        paths.wiki_root.to_string_lossy().to_string(),
+        paths.raw_sources.to_string_lossy().to_string(),
+    ];
+    for rel in public_rels {
+        let path = safe_join(project_path, &rel)?;
         if !path.exists() {
             continue;
         }
@@ -1252,12 +1291,12 @@ mod tests {
 
     #[test]
     fn public_api_paths_exclude_internal_state() {
-        assert!(is_public_project_rel("wiki/index.md"));
-        assert!(is_public_project_rel("Wiki/index.md"));
-        assert!(is_public_project_rel("raw/sources/source.md"));
-        assert!(is_public_project_rel("Raw/Sources/source.md"));
-        assert!(!is_public_project_rel(".llm-wiki/file-change-queue.json"));
-        assert!(!is_public_project_rel("wiki/.draft.md"));
+        assert!(is_public_project_rel("wiki/index.md", &path_config::Paths::default()));
+        assert!(is_public_project_rel("Wiki/index.md", &path_config::Paths::default()));
+        assert!(is_public_project_rel("raw/sources/source.md", &path_config::Paths::default()));
+        assert!(is_public_project_rel("Raw/Sources/source.md", &path_config::Paths::default()));
+        assert!(!is_public_project_rel(".llm-wiki/file-change-queue.json", &path_config::Paths::default()));
+        assert!(!is_public_project_rel("wiki/.draft.md", &path_config::Paths::default()));
     }
 
     #[test]
