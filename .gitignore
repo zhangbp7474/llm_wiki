@@ -22,7 +22,11 @@ src-tauri/gen/
 .env.*.local
 
 # Internal docs (not shipped)
-docs/
+# - Plans live in docs/plans/
+# - One-off dev / integration notes live at docs/<name>.md
+# - End-user-facing guides live in docs/user/ and ARE shipped.
+docs/plans/
+docs/*.md
 AGENTS.md
 
 # Benchmark and test data (local only)
