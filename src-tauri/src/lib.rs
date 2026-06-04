@@ -95,6 +95,36 @@ pub fn run() {
             // launch with built-in defaults.
             match app.path().app_data_dir() {
                 Ok(dir) => {
+                    // First-run seed: if the user has a master
+                    // config at <home>/.llm-wiki/path.yaml but the
+                    // app-global copy at <app_data_dir>/paths.yaml
+                    // does not exist yet, copy it across. Never
+                    // overwrites an existing target.
+                    if let Some(home) =
+                        std::env::var_os("HOME").map(std::path::PathBuf::from)
+                    {
+                        match path_config::sync_source_to_layers(
+                            &home,
+                            None,
+                            Some(&dir),
+                        ) {
+                            Ok(wrote) if !wrote.is_empty() => {
+                                eprintln!(
+                                    "[path_config] seeded {} from ~/.llm-wiki/path.yaml: {}",
+                                    if wrote.len() == 1 { "app-global paths.yaml" } else { "paths.yaml" },
+                                    wrote
+                                        .iter()
+                                        .map(|p| p.display().to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => eprintln!(
+                                "[path_config] first-run seed failed: {e}"
+                            ),
+                        }
+                    }
                     match path_config::load_global_yaml_at(&dir) {
                         Ok(Some(file)) => {
                             let overrides = file.paths != path_config::Paths::default();

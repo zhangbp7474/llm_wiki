@@ -316,6 +316,71 @@ pub fn load_global_yaml_at(
     Ok(Some(file))
 }
 
+/// First-run seed: copy `~/.llm-wiki/path.yaml` (the user-level
+/// master config) to the project-level and/or app-global locations,
+/// **only if the target does not already exist**.
+///
+/// Why: the user maintains one canonical config at the user-home
+/// location (`<home>/.llm-wiki/path.yaml`). On first launch (or
+/// first project open) we propagate it to the per-project and
+/// app-data locations so the existing loaders (`load_project_yaml`,
+/// `load_global_yaml_at`) find it. We never overwrite a target that
+/// already has content — once the seed is done, each layer is
+/// authoritative on its own and may be edited independently.
+///
+/// Source:    `<home>/.llm-wiki/path.yaml`
+/// Project:   `<project_root>/path.yaml`     (only if `project_root` is `Some`)
+/// Global:    `<app_data_dir>/paths.yaml`    (only if `app_data_dir` is `Some`)
+///
+/// Returns the list of target files that were actually written.
+/// An empty list means either the source was missing, every supplied
+/// target already existed, or no targets were supplied — all of
+/// which are the steady-state "no-op" cases.
+///
+/// The write is a plain `std::fs::write` (not the atomic
+/// tmp+rename used elsewhere) because the target file is guaranteed
+/// not to exist when this function reaches the write — there is
+/// nothing to corrupt on a partial write.
+pub fn sync_source_to_layers(
+    home_dir: &Path,
+    project_root: Option<&Path>,
+    app_data_dir: Option<&Path>,
+) -> Result<Vec<PathBuf>, PathConfigError> {
+    let source = home_dir.join(".llm-wiki").join("path.yaml");
+    if !source.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&source)
+        .map_err(|e| PathConfigError::Io(e.to_string()))?;
+
+    let mut wrote = Vec::new();
+
+    if let Some(pr) = project_root {
+        let target = pr.join("path.yaml");
+        if !target.exists() {
+            std::fs::write(&target, &content)
+                .map_err(|e| PathConfigError::Io(e.to_string()))?;
+            wrote.push(target);
+        }
+    }
+
+    if let Some(ad) = app_data_dir {
+        let target = ad.join("paths.yaml");
+        if !target.exists() {
+            // app_data_dir is created by Tauri on first run, but be
+            // defensive in case it is missing (e.g. running outside
+            // a packaged Tauri shell during tests).
+            std::fs::create_dir_all(ad)
+                .map_err(|e| PathConfigError::Io(e.to_string()))?;
+            std::fs::write(&target, &content)
+                .map_err(|e| PathConfigError::Io(e.to_string()))?;
+            wrote.push(target);
+        }
+    }
+
+    Ok(wrote)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,6 +603,97 @@ paths:
         assert_eq!(resolved.wiki_root, PathBuf::from("notes/wiki"));
         assert_eq!(resolved.purpose, PathBuf::from("README.md"));
         assert_eq!(resolved.wiki_entities, PathBuf::from("wiki/entities"));
+    }
+
+    // -----------------------------------------------------------------------
+    // sync_source_to_layers
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn sync_source_to_layers_missing_source_is_noop() {
+        let home = tempdir_unique("sync-no-source");
+        // No source file at <home>/.llm-wiki/path.yaml
+        let project = tempdir_unique("sync-no-source-prj");
+        let app = tempdir_unique("sync-no-source-app");
+        let wrote =
+            sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
+        assert!(wrote.is_empty());
+        assert!(!project.join("path.yaml").exists());
+        assert!(!app.join("paths.yaml").exists());
+    }
+
+    #[test]
+    fn sync_source_to_layers_writes_both_targets_when_missing() {
+        let home = tempdir_unique("sync-both");
+        std::fs::create_dir_all(home.join(".llm-wiki")).unwrap();
+        std::fs::write(
+            home.join(".llm-wiki/path.yaml"),
+            "version: 1\npaths:\n  raw_sources: from-home\n",
+        )
+        .unwrap();
+        let project = tempdir_unique("sync-both-prj");
+        let app = tempdir_unique("sync-both-app");
+        let wrote =
+            sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
+        assert_eq!(wrote.len(), 2);
+        assert!(project.join("path.yaml").exists());
+        assert!(app.join("paths.yaml").exists());
+        // Both targets contain the source content
+        let pr = std::fs::read_to_string(project.join("path.yaml")).unwrap();
+        let gl = std::fs::read_to_string(app.join("paths.yaml")).unwrap();
+        assert!(pr.contains("from-home"));
+        assert!(gl.contains("from-home"));
+    }
+
+    #[test]
+    fn sync_source_to_layers_skips_existing_project_target() {
+        let home = tempdir_unique("sync-prj-exists");
+        std::fs::create_dir_all(home.join(".llm-wiki")).unwrap();
+        std::fs::write(
+            home.join(".llm-wiki/path.yaml"),
+            "version: 1\npaths:\n  raw_sources: from-home\n",
+        )
+        .unwrap();
+        let project = tempdir_unique("sync-prj-exists-prj");
+        // Project target pre-populated with different content
+        std::fs::write(
+            project.join("path.yaml"),
+            "version: 1\npaths:\n  raw_sources: from-prj\n",
+        )
+        .unwrap();
+        let app = tempdir_unique("sync-prj-exists-app");
+        let wrote =
+            sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
+        // Only the global target gets written; project target preserved
+        assert_eq!(wrote.len(), 1);
+        assert_eq!(wrote[0], app.join("paths.yaml"));
+        let pr = std::fs::read_to_string(project.join("path.yaml")).unwrap();
+        assert!(pr.contains("from-prj"));
+        assert!(!pr.contains("from-home"));
+    }
+
+    #[test]
+    fn sync_source_to_layers_steady_state_is_noop() {
+        let home = tempdir_unique("sync-steady");
+        std::fs::create_dir_all(home.join(".llm-wiki")).unwrap();
+        std::fs::write(
+            home.join(".llm-wiki/path.yaml"),
+            "version: 1\npaths:\n  raw_sources: from-home\n",
+        )
+        .unwrap();
+        let project = tempdir_unique("sync-steady-prj");
+        let app = tempdir_unique("sync-steady-app");
+        // Both targets pre-populated — steady state
+        std::fs::write(project.join("path.yaml"), "x: 1\n").unwrap();
+        std::fs::write(app.join("paths.yaml"), "x: 1\n").unwrap();
+        let wrote =
+            sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
+        assert!(wrote.is_empty());
+        // Neither target was modified
+        let pr = std::fs::read_to_string(project.join("path.yaml")).unwrap();
+        let gl = std::fs::read_to_string(app.join("paths.yaml")).unwrap();
+        assert_eq!(pr, "x: 1\n");
+        assert_eq!(gl, "x: 1\n");
     }
 
     /// Test-only helper: create a uniquely-named temp dir under
