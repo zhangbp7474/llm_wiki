@@ -310,6 +310,29 @@ pub fn open_project(
     run_guarded("open_project", || {
         let root = Path::new(&path);
 
+        // First-run seed: if the user has a master config at
+        // <home>/.llm-wiki/path.yaml and either the per-project
+        // copy at <root>/path.yaml or the app-global copy at
+        // <app_data_dir>/paths.yaml is missing, copy the source
+        // across. Never overwrites an existing target. This is the
+        // project-side twin of the same call in lib.rs::setup.
+        if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+            if let Ok(app_dir) = app.path().app_data_dir() {
+                if let Ok(wrote) = path_config::sync_source_to_layers(
+                    &home,
+                    Some(root),
+                    Some(&app_dir),
+                ) {
+                    for path in &wrote {
+                        eprintln!(
+                            "[path_config] seeded {} from ~/.llm-wiki/path.yaml",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+
         // Resolve the layout for this project: project-level yaml
         // (if any) + global yaml + built-in defaults. Errors here
         // (version mismatch, parse error, unsafe path) are surfaced
