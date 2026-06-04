@@ -40,7 +40,7 @@ export interface PathsFile {
 export const CURRENT_SCHEMA_VERSION = 1
 
 /** Built-in default Paths — also returned by `getPathConfig` when the
- *  project has no `path.yaml`. */
+ *  project has no `paths.yaml`. */
 export const DEFAULT_PATHS: Paths = {
   rawRoot: "raw",
   rawAssets: "raw/assets",

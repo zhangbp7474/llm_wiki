@@ -27,7 +27,7 @@ If this layout doesn't fit your setup (existing folder structure, putting the wi
 
 | Layer | File | Scope | Read behavior on schema mismatch |
 |-------|------|-------|----------------------------------|
-| **Project** | `<project>/path.yaml`           | only this project | hard error (project fails to open) |
+| **Project** | `<project>/paths.yaml`           | only this project | hard error (project fails to open) |
 | **Global**   | `<app_data_dir>/paths.yaml`     | all projects on this machine | warning, then ignored |
 
 Resolution order (highest priority first):
@@ -42,7 +42,7 @@ If a key is set in both layers, **project wins**. If a key is set in neither, th
 
 ### Option A — through the UI (easiest)
 
-Open the project, go to **Settings → Project paths**, edit any field, click **Save**. The UI writes `path.yaml` at the project root.
+Open the project, go to **Settings → Project paths**, edit any field, click **Save**. The UI writes `paths.yaml` at the project root.
 
 The "Reopen to apply" hint means: changes take effect the next time the project is opened. The currently-open project still uses the layout it was opened with until you close and reopen it.
 
@@ -52,7 +52,7 @@ Create the file at the appropriate path:
 
 ```bash
 mkdir -p /path/to/project/.llm-wiki
-$EDITOR /path/to/project/path.yaml
+$EDITOR /path/to/project/paths.yaml
 ```
 
 The schema is:
@@ -102,7 +102,7 @@ All paths are **project-relative** by default (no leading slash, no `..`).
 ### Fit an existing folder structure
 
 ```yaml
-# path.yaml
+# paths.yaml
 version: 1
 paths:
   raw_sources: inbox
@@ -115,7 +115,7 @@ The project now uses `inbox/` for sources and `my-wiki/` for the generated pages
 ### Point the wiki outside the project root (absolute paths)
 
 ```yaml
-# path.yaml  (or <app_data_dir>/paths.yaml for global)
+# paths.yaml  (or <app_data_dir>/paths.yaml for global)
 version: 1
 paths:
   wiki_root: /home/me/notes/my-wiki
@@ -163,7 +163,7 @@ Any project without a project-level override now inherits this layout.
 
 ## Resetting to defaults
 
-Click **Reset to defaults** in the Settings → Project paths panel to delete the project's `path.yaml`. The app will then use the global file (if any) and the built-in defaults.
+Click **Reset to defaults** in the Settings → Project paths panel to delete the project's `paths.yaml`. The app will then use the global file (if any) and the built-in defaults.
 
 To reset the **global** file, just delete it from the path listed under "Common scenarios" above.
 

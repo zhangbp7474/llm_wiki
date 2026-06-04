@@ -3,7 +3,7 @@
 //! See `docs/plans/2026-06-01-configurable-paths.md` for the design.
 //!
 //! Two file levels are supported:
-//!   1. **Project-level** — `<project_root>/path.yaml` (per-project override)
+//!   1. **Project-level** — `<project_root>/paths.yaml` (per-project override)
 //!   2. **Global**       — `<app_data_dir>/paths.yaml` (cross-project default)
 //!
 //! Resolution order for each path key (see `resolve_paths` in Task 3):
@@ -76,7 +76,7 @@ impl Default for Paths {
     }
 }
 
-/// On-disk structure of `<project_root>/path.yaml` and
+/// On-disk structure of `<project_root>/paths.yaml` and
 /// `<app_data_dir>/paths.yaml`. The `version` field is checked against
 /// `CURRENT_SCHEMA_VERSION` on load; `paths` holds the (possibly
 /// partial) override that the user wrote.
@@ -243,7 +243,7 @@ pub fn resolve_paths(
 // ---------------------------------------------------------------------------
 
 /// Load the project-level `paths.yaml` from
-/// `<project_root>/path.yaml`.
+/// `<project_root>/paths.yaml`.
 ///
 /// - `Ok(None)`  — file does not exist; caller should fall back to the
 ///                 next layer (global, then built-in default).
@@ -253,7 +253,7 @@ pub fn resolve_paths(
 ///                 a hard error (caller rejects the project); the
 ///                 global file is more lenient (Task 5).
 pub fn load_project_yaml(project_root: &Path) -> Result<Option<PathsFile>, PathConfigError> {
-    let p = project_root.join("path.yaml");
+    let p = project_root.join("paths.yaml");
     if !p.exists() {
         return Ok(None);
     }
@@ -266,7 +266,7 @@ pub fn load_project_yaml(project_root: &Path) -> Result<Option<PathsFile>, PathC
     Ok(Some(file))
 }
 
-/// Save a `PathsFile` to `<project_root>/path.yaml`. The write is
+/// Save a `PathsFile` to `<project_root>/paths.yaml`. The write is
 /// atomic — we serialize to a `.tmp` sibling in the same directory
 /// then `rename` over the target, so a half-written file can never
 /// appear on disk.
@@ -275,9 +275,9 @@ pub fn save_project_yaml(
     file: &PathsFile,
 ) -> Result<(), PathConfigError> {
     let s = serde_yaml::to_string(file).map_err(|e| PathConfigError::Yaml(e.to_string()))?;
-    let tmp = project_root.join("path.yaml.tmp");
+    let tmp = project_root.join("paths.yaml.tmp");
     std::fs::write(&tmp, s).map_err(|e| PathConfigError::Io(e.to_string()))?;
-    std::fs::rename(&tmp, project_root.join("path.yaml"))
+    std::fs::rename(&tmp, project_root.join("paths.yaml"))
         .map_err(|e| PathConfigError::Io(e.to_string()))?;
     Ok(())
 }
@@ -316,20 +316,20 @@ pub fn load_global_yaml_at(
     Ok(Some(file))
 }
 
-/// First-run seed: copy `~/.llm-wiki/path.yaml` (the user-level
+/// First-run seed: copy `~/.llm-wiki/paths.yaml` (the user-level
 /// master config) to the project-level and/or app-global locations,
 /// **only if the target does not already exist**.
 ///
 /// Why: the user maintains one canonical config at the user-home
-/// location (`<home>/.llm-wiki/path.yaml`). On first launch (or
+/// location (`<home>/.llm-wiki/paths.yaml`). On first launch (or
 /// first project open) we propagate it to the per-project and
 /// app-data locations so the existing loaders (`load_project_yaml`,
 /// `load_global_yaml_at`) find it. We never overwrite a target that
 /// already has content — once the seed is done, each layer is
 /// authoritative on its own and may be edited independently.
 ///
-/// Source:    `<home>/.llm-wiki/path.yaml`
-/// Project:   `<project_root>/path.yaml`     (only if `project_root` is `Some`)
+/// Source:    `<home>/.llm-wiki/paths.yaml`
+/// Project:   `<project_root>/paths.yaml`     (only if `project_root` is `Some`)
 /// Global:    `<app_data_dir>/paths.yaml`    (only if `app_data_dir` is `Some`)
 ///
 /// Returns the list of target files that were actually written.
@@ -346,7 +346,7 @@ pub fn sync_source_to_layers(
     project_root: Option<&Path>,
     app_data_dir: Option<&Path>,
 ) -> Result<Vec<PathBuf>, PathConfigError> {
-    let source = home_dir.join(".llm-wiki").join("path.yaml");
+    let source = home_dir.join(".llm-wiki").join("paths.yaml");
     if !source.exists() {
         return Ok(Vec::new());
     }
@@ -356,7 +356,7 @@ pub fn sync_source_to_layers(
     let mut wrote = Vec::new();
 
     if let Some(pr) = project_root {
-        let target = pr.join("path.yaml");
+        let target = pr.join("paths.yaml");
         if !target.exists() {
             std::fs::write(&target, &content)
                 .map_err(|e| PathConfigError::Io(e.to_string()))?;
@@ -503,7 +503,7 @@ paths:
     fn load_project_yaml_present_parses() {
         let dir = tempdir_unique("pc-present");
         std::fs::write(
-            dir.join("path.yaml"),
+            dir.join("paths.yaml"),
             "version: 1\npaths:\n  raw_sources: docs/inbox\n",
         )
         .unwrap();
@@ -516,7 +516,7 @@ paths:
     fn load_project_yaml_unsupported_version_fails() {
         let dir = tempdir_unique("pc-version");
         std::fs::write(
-            dir.join("path.yaml"),
+            dir.join("paths.yaml"),
             "version: 999\npaths: {}\n",
         )
         .unwrap();
@@ -612,13 +612,13 @@ paths:
     #[test]
     fn sync_source_to_layers_missing_source_is_noop() {
         let home = tempdir_unique("sync-no-source");
-        // No source file at <home>/.llm-wiki/path.yaml
+        // No source file at <home>/.llm-wiki/paths.yaml
         let project = tempdir_unique("sync-no-source-prj");
         let app = tempdir_unique("sync-no-source-app");
         let wrote =
             sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
         assert!(wrote.is_empty());
-        assert!(!project.join("path.yaml").exists());
+        assert!(!project.join("paths.yaml").exists());
         assert!(!app.join("paths.yaml").exists());
     }
 
@@ -627,7 +627,7 @@ paths:
         let home = tempdir_unique("sync-both");
         std::fs::create_dir_all(home.join(".llm-wiki")).unwrap();
         std::fs::write(
-            home.join(".llm-wiki/path.yaml"),
+            home.join(".llm-wiki/paths.yaml"),
             "version: 1\npaths:\n  raw_sources: from-home\n",
         )
         .unwrap();
@@ -636,10 +636,10 @@ paths:
         let wrote =
             sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
         assert_eq!(wrote.len(), 2);
-        assert!(project.join("path.yaml").exists());
+        assert!(project.join("paths.yaml").exists());
         assert!(app.join("paths.yaml").exists());
         // Both targets contain the source content
-        let pr = std::fs::read_to_string(project.join("path.yaml")).unwrap();
+        let pr = std::fs::read_to_string(project.join("paths.yaml")).unwrap();
         let gl = std::fs::read_to_string(app.join("paths.yaml")).unwrap();
         assert!(pr.contains("from-home"));
         assert!(gl.contains("from-home"));
@@ -650,14 +650,14 @@ paths:
         let home = tempdir_unique("sync-prj-exists");
         std::fs::create_dir_all(home.join(".llm-wiki")).unwrap();
         std::fs::write(
-            home.join(".llm-wiki/path.yaml"),
+            home.join(".llm-wiki/paths.yaml"),
             "version: 1\npaths:\n  raw_sources: from-home\n",
         )
         .unwrap();
         let project = tempdir_unique("sync-prj-exists-prj");
         // Project target pre-populated with different content
         std::fs::write(
-            project.join("path.yaml"),
+            project.join("paths.yaml"),
             "version: 1\npaths:\n  raw_sources: from-prj\n",
         )
         .unwrap();
@@ -667,7 +667,7 @@ paths:
         // Only the global target gets written; project target preserved
         assert_eq!(wrote.len(), 1);
         assert_eq!(wrote[0], app.join("paths.yaml"));
-        let pr = std::fs::read_to_string(project.join("path.yaml")).unwrap();
+        let pr = std::fs::read_to_string(project.join("paths.yaml")).unwrap();
         assert!(pr.contains("from-prj"));
         assert!(!pr.contains("from-home"));
     }
@@ -677,20 +677,20 @@ paths:
         let home = tempdir_unique("sync-steady");
         std::fs::create_dir_all(home.join(".llm-wiki")).unwrap();
         std::fs::write(
-            home.join(".llm-wiki/path.yaml"),
+            home.join(".llm-wiki/paths.yaml"),
             "version: 1\npaths:\n  raw_sources: from-home\n",
         )
         .unwrap();
         let project = tempdir_unique("sync-steady-prj");
         let app = tempdir_unique("sync-steady-app");
         // Both targets pre-populated — steady state
-        std::fs::write(project.join("path.yaml"), "x: 1\n").unwrap();
+        std::fs::write(project.join("paths.yaml"), "x: 1\n").unwrap();
         std::fs::write(app.join("paths.yaml"), "x: 1\n").unwrap();
         let wrote =
             sync_source_to_layers(&home, Some(&project), Some(&app)).unwrap();
         assert!(wrote.is_empty());
         // Neither target was modified
-        let pr = std::fs::read_to_string(project.join("path.yaml")).unwrap();
+        let pr = std::fs::read_to_string(project.join("paths.yaml")).unwrap();
         let gl = std::fs::read_to_string(app.join("paths.yaml")).unwrap();
         assert_eq!(pr, "x: 1\n");
         assert_eq!(gl, "x: 1\n");
