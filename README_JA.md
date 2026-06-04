@@ -419,6 +419,50 @@ npm run tauri build    # 本番ビルド
 3. 「パッケージ化されていない拡張機能を読み込む」をクリック
 4. `extension/` ディレクトリを選択
 
+## 開発とテスト
+
+### 前提条件
+- Node.js 20+
+- Rust 1.70+（`cargo` を PATH に通す — シェル rc に `source $HOME/.cargo/env` を追加）
+- （任意）mmx 関連テスト用 `mmx-cli`：`npm i -g mmx-cli` + `mmx auth login --api-key <key>`
+
+### 初回セットアップ
+```bash
+git clone https://github.com/nashsu/llm_wiki.git
+cd llm_wiki
+npm ci                  # Node 依存をインストール（初回は `npm install`）
+```
+
+### dev モードで起動
+```bash
+npm run tauri dev
+# 初回 cargo ビルドは約 2-3 分（debug + debuginfo）
+# 増分ビルドは < 5 秒
+# 起動後 3 つのローカルサービスが立ち上がる：
+#   Vite dev URL   http://127.0.0.1:1420/    （webview エントリ）
+#   API Server     http://127.0.0.1:19828/api/v1   （token 認証）
+#   Clip Server    http://127.0.0.1:19827/   （ブラウザ拡張ブリッジ）
+```
+
+### テスト実行
+```bash
+npm run typecheck                  # TypeScript：0 エラーが期待値
+npm run test:mocks                 # 89 ファイル / 1235 テスト、CI 向け（~5s）
+npm run test:llm                   # real-LLM テスト 10 件、mmx-cli + API key が必要
+cd src-tauri && cargo test --lib   # Rust テスト 121 件
+```
+
+### バックエンド疎通確認
+```bash
+curl http://127.0.0.1:19828/api/v1/health
+# → {"ok":true,"version":"0.4.16","enabled":true,"status":"running"}
+```
+
+### 停止
+```bash
+pkill -f 'tauri dev|cargo run'
+```
+
 ## クイックスタート
 
 1. アプリを起動し、新規プロジェクトを作成（テンプレートを選択）
