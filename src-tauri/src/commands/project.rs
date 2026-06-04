@@ -311,8 +311,8 @@ pub fn open_project(
         let root = Path::new(&path);
 
         // First-run seed: if the user has a master config at
-        // <home>/.llm-wiki/path.yaml and either the per-project
-        // copy at <root>/path.yaml or the app-global copy at
+        // <home>/.llm-wiki/paths.yaml and either the per-project
+        // copy at <root>/paths.yaml or the app-global copy at
         // <app_data_dir>/paths.yaml is missing, copy the source
         // across. Never overwrites an existing target. This is the
         // project-side twin of the same call in lib.rs::setup.
@@ -325,7 +325,7 @@ pub fn open_project(
                 ) {
                     for path in &wrote {
                         eprintln!(
-                            "[path_config] seeded {} from ~/.llm-wiki/path.yaml",
+                            "[path_config] seeded {} from ~/.llm-wiki/paths.yaml",
                             path.display()
                         );
                     }

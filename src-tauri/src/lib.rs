@@ -183,7 +183,7 @@ pub fn run() {
             match app.path().app_data_dir() {
                 Ok(dir) => {
                     // First-run seed: if the user has a master
-                    // config at <home>/.llm-wiki/path.yaml but the
+                    // config at <home>/.llm-wiki/paths.yaml but the
                     // app-global copy at <app_data_dir>/paths.yaml
                     // does not exist yet, copy it across. Never
                     // overwrites an existing target.
@@ -197,7 +197,7 @@ pub fn run() {
                         ) {
                             Ok(wrote) if !wrote.is_empty() => {
                                 eprintln!(
-                                    "[path_config] seeded {} from ~/.llm-wiki/path.yaml: {}",
+                                    "[path_config] seeded {} from ~/.llm-wiki/paths.yaml: {}",
                                     if wrote.len() == 1 { "app-global paths.yaml" } else { "paths.yaml" },
                                     wrote
                                         .iter()
@@ -272,7 +272,7 @@ pub fn run() {
             commands::project::open_project,
             commands::project::open_project_folder,
             // path_config IPC surface (Task 10): read / write /
-            // reset the project's `path.yaml`.
+            // reset the project's `paths.yaml`.
             commands::path_config_cmd::get_path_config,
             commands::path_config_cmd::set_path_config,
             commands::path_config_cmd::reset_path_config,

@@ -354,7 +354,7 @@ LLM Wiki 是一个跨平台桌面应用，能将你的文档自动转化为有�
 
 原版采用硬编码的目录结构（`raw/`、`wiki/`、`purpose.md` 等）。我们通过一个可选的 YAML 文件让用户可以覆盖：
 
-- **双层配置** — 项目级 `<project>/path.yaml`（最高优先级）和全局 `<app_data_dir>/paths.yaml`（跨项目默认）
+- **双层配置** — 项目级 `<project>/paths.yaml`（最高优先级）和全局 `<app_data_dir>/paths.yaml`（跨项目默认）
 - **三层回退** — 项目 → 全局 → 内置默认，字段级别合并
 - **15 个可覆盖字段** — 涵盖所有布局目录和顶层文件
 - **设置 UI** — `Settings → Project paths` 面板，提供实时表单、保存和「恢复默认」按钮
