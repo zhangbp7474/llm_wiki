@@ -14,15 +14,18 @@ import {
   FolderSync,
   FolderTree,
   Server,
+  Settings,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { invoke } from "@tauri-apps/api/core"
+import { disable as disableAutostart, enable as enableAutostart } from "@tauri-apps/plugin-autostart"
 import i18n from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { useWikiStore } from "@/stores/wiki-store"
 import { useChatStore } from "@/stores/chat-store"
 import { useUpdateStore, hasAvailableUpdate } from "@/stores/update-store"
-import { loadSourceWatchConfig, saveLanguage } from "@/lib/project-store"
+import { loadSourceWatchConfig, saveLanguage, saveTheme, loadTheme } from "@/lib/project-store"
+import { applyTheme, type AppTheme } from "@/lib/theme"
 import type { SettingsDraft, DraftSetter } from "./settings-types"
 import { normalizeSourceWatchConfig } from "@/lib/source-watch-config"
 import { LlmProviderSection } from "./sections/llm-provider-section"
@@ -35,12 +38,14 @@ import { NetworkSection } from "./sections/network-section"
 import { ScheduledImportSection } from "./sections/scheduled-import-section"
 import { SourceWatchSection } from "./sections/source-watch-section"
 import { ApiServerSection } from "./sections/api-server-section"
+import { GeneralSection } from "./sections/general-section"
 import { ChangelogSection } from "./sections/changelog-section"
 import { MaintenanceSection } from "./sections/maintenance-section"
 import { PathConfigSection } from "./sections/path-config-section"
 import { AboutSection } from "./sections/about-section"
 
 type CategoryId =
+  | "general"
   | "llm"
   | "embedding"
   | "multimodal"
@@ -66,6 +71,7 @@ interface Category {
 }
 
 const CATEGORIES: Category[] = [
+  { id: "general", labelKey: "settings.categories.general", icon: Settings },
   { id: "llm", labelKey: "settings.categories.llm", icon: Bot },
   { id: "embedding", labelKey: "settings.categories.embedding", icon: Binary },
   { id: "multimodal", labelKey: "settings.categories.multimodal", icon: ImageIcon },
@@ -91,9 +97,11 @@ function initialDraft(
   scheduledImport: ReturnType<typeof useWikiStore.getState>["scheduledImportConfig"],
   sourceWatch: ReturnType<typeof useWikiStore.getState>["sourceWatchConfig"],
   apiConfig: ReturnType<typeof useWikiStore.getState>["apiConfig"],
+  generalConfig: ReturnType<typeof useWikiStore.getState>["generalConfig"],
   maxHistoryMessages: number,
   uiLanguage: string,
   projectPath?: string,
+  theme?: AppTheme,
 ): SettingsDraft {
   // Show absolute path: if stored path is empty, show default using project path
   // If stored path is relative (legacy), prepend project path
@@ -147,8 +155,12 @@ function initialDraft(
     sourceWatchConfig: normalizeSourceWatchConfig(sourceWatch),
     apiEnabled: apiConfig.enabled,
     apiAllowUnauthenticated: apiConfig.allowUnauthenticated,
+    apiMcpEnabled: apiConfig.mcpEnabled,
     apiToken: apiConfig.token,
+    autostart: generalConfig.autostart,
+    closeBehavior: generalConfig.closeBehavior,
     uiLanguage,
+    theme: theme ?? "system",
   }
 }
 
@@ -171,6 +183,8 @@ export function SettingsView() {
   const setSourceWatchConfig = useWikiStore((s) => s.setSourceWatchConfig)
   const apiConfig = useWikiStore((s) => s.apiConfig)
   const setApiConfig = useWikiStore((s) => s.setApiConfig)
+  const generalConfig = useWikiStore((s) => s.generalConfig)
+  const setGeneralConfig = useWikiStore((s) => s.setGeneralConfig)
   const maxHistoryMessages = useChatStore((s) => s.maxHistoryMessages)
   const setMaxHistoryMessages = useChatStore((s) => s.setMaxHistoryMessages)
   // Drives the red dot next to the "About" row in the settings
@@ -185,6 +199,7 @@ export function SettingsView() {
 
   const [active, setActive] = useState<CategoryId>("llm")
   const [saved, setSaved] = useState(false)
+  const [currentTheme, setCurrentTheme] = useState<AppTheme>("system")
   const [draft, setDraftState] = useState<SettingsDraft>(() =>
     initialDraft(
       llmConfig,
@@ -195,11 +210,22 @@ export function SettingsView() {
       scheduledImportConfig,
       sourceWatchConfig,
       apiConfig,
+      generalConfig,
       maxHistoryMessages,
       i18n.language,
       project?.path,
     ),
   )
+
+  // Load theme on mount
+  useEffect(() => {
+    loadTheme().then((theme) => {
+      if (theme) {
+        setCurrentTheme(theme)
+        setDraftState((prev) => ({ ...prev, theme }))
+      }
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -238,9 +264,11 @@ export function SettingsView() {
         scheduledImportConfig,
         sourceWatchConfig,
         apiConfig,
+        generalConfig,
         maxHistoryMessages,
         prev.uiLanguage,
         project?.path,
+        prev.theme,
       ),
     )
   }, [
@@ -252,6 +280,7 @@ export function SettingsView() {
     scheduledImportConfig,
     sourceWatchConfig,
     apiConfig,
+    generalConfig,
     maxHistoryMessages,
     project,
   ])
@@ -270,6 +299,7 @@ export function SettingsView() {
       saveScheduledImportConfig,
       saveSourceWatchConfig,
       saveApiConfig,
+      saveGeneralConfig,
     } = await import("@/lib/project-store")
 
     const newLlm = {
@@ -377,12 +407,13 @@ export function SettingsView() {
     setMaxHistoryMessages(draft.maxHistoryMessages)
 
     // ── API server: persist + push to store. The Rust side reads
-    // `apiConfig.{enabled,token}` from this same `app-state.json` on
+    // `apiConfig.{enabled,token,mcpEnabled}` from this same `app-state.json` on
     // every request via a 5s cache, so saved changes propagate
     // within that window without any IPC round-trip.
     const newApiConfig = {
       enabled: draft.apiEnabled,
       allowUnauthenticated: draft.apiAllowUnauthenticated,
+      mcpEnabled: draft.apiMcpEnabled,
       token: draft.apiToken.trim(),
     }
     setApiConfig(newApiConfig)
@@ -393,9 +424,38 @@ export function SettingsView() {
       console.warn("[api] failed to reload API server config cache:", err)
     }
 
+    const newGeneralConfig = {
+      autostart: draft.autostart,
+      closeBehavior: draft.closeBehavior,
+    }
+    setGeneralConfig(newGeneralConfig)
+    await saveGeneralConfig(newGeneralConfig)
+    try {
+      if (newGeneralConfig.autostart) {
+        await enableAutostart()
+      } else {
+        await disableAutostart()
+      }
+    } catch (err) {
+      console.warn("[general] failed to update autostart:", err)
+    }
+    try {
+      await invoke<string>("set_close_behavior", { value: newGeneralConfig.closeBehavior })
+    } catch (err) {
+      console.warn("[general] failed to update close behavior:", err)
+    }
+
     if (draft.uiLanguage !== i18n.language) {
       await i18n.changeLanguage(draft.uiLanguage)
       await saveLanguage(draft.uiLanguage)
+    }
+
+    // Save theme
+    if (draft.theme !== currentTheme) {
+      await saveTheme(draft.theme)
+      setCurrentTheme(draft.theme)
+      // Apply theme immediately
+      applyTheme(draft.theme)
     }
 
     setSaved(true)
@@ -410,13 +470,17 @@ export function SettingsView() {
     setScheduledImportConfig,
     setSourceWatchConfig,
     setApiConfig,
+    setGeneralConfig,
     scheduledImportConfig,
     setMaxHistoryMessages,
     outputLanguage,
+    currentTheme,
   ])
 
   const body = useMemo(() => {
     switch (active) {
+      case "general":
+        return <GeneralSection draft={draft} setDraft={setDraft} />
       case "llm":
         // The LLM section manages its own store state (per-provider
         // configs + active preset) and persists directly — it bypasses
@@ -439,7 +503,7 @@ export function SettingsView() {
       case "output":
         return <OutputSection draft={draft} setDraft={setDraft} />
       case "interface":
-        return <InterfaceSection draft={draft} setDraft={setDraft} />
+        return <InterfaceSection draft={draft} setDraft={setDraft} onThemeChange={applyTheme} />
       case "maintenance":
         return <MaintenanceSection />
       case "path-config":
