@@ -14,6 +14,8 @@
   <a href="#what-we-changed--added">Features</a> •
   <a href="#tech-stack">Tech Stack</a> •
   <a href="#installation">Installation</a> •
+  <a href="#development--testing">Development & Testing</a> •
+  <a href="#quick-start">Quick Start</a> •
   <a href="#credits">Credits</a> •
   <a href="#license">License</a>
 </p>
@@ -409,6 +411,50 @@ npm run tauri build    # Production build
 2. Enable "Developer mode"
 3. Click "Load unpacked"
 4. Select the `extension/` directory
+
+## Development & Testing
+
+### Prerequisites
+- Node.js 20+
+- Rust 1.70+ (with `cargo` on PATH — add `source $HOME/.cargo/env` to your shell rc)
+- (Optional) `mmx-cli` for mmx-related tests: `npm i -g mmx-cli` and `mmx auth login --api-key <key>`
+
+### First-time setup
+```bash
+git clone https://github.com/nashsu/llm_wiki.git
+cd llm_wiki
+npm ci                  # install Node deps (use `npm install` on first run)
+```
+
+### Run the app in dev mode
+```bash
+npm run tauri dev
+# First cargo build takes ~2-3 min (debug + debuginfo);
+# incremental rebuilds are < 5s.
+# On ready, three local services come up:
+#   Vite dev URL   http://127.0.0.1:1420/    (webview payload)
+#   API Server     http://127.0.0.1:19828/api/v1  (token-protected)
+#   Clip Server    http://127.0.0.1:19827/   (browser extension bridge)
+```
+
+### Run the test suite
+```bash
+npm run typecheck                  # TypeScript: 0 errors expected
+npm run test:mocks                 # 89 files / 1235 tests, CI-friendly (~5s)
+npm run test:llm                   # 10 real-LLM tests, needs mmx-cli + API key
+cd src-tauri && cargo test --lib   # 121 Rust tests
+```
+
+### Verify the backend is healthy
+```bash
+curl http://127.0.0.1:19828/api/v1/health
+# → {"ok":true,"version":"0.4.16","enabled":true,"status":"running"}
+```
+
+### Stop
+```bash
+pkill -f 'tauri dev|cargo run'
+```
 
 ## Quick Start
 

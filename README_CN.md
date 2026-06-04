@@ -410,6 +410,50 @@ npm run tauri build    # 生产构建
 3. 点击「加载已解压的扩展程序」
 4. 选择 `extension/` 目录
 
+## 开发者与测试
+
+### 前置依赖
+- Node.js 20+
+- Rust 1.70+（`cargo` 需在 PATH；把 `source $HOME/.cargo/env` 加到 shell rc）
+- （可选）`mmx-cli` 用于 mmx 相关测试：`npm i -g mmx-cli` + `mmx auth login --api-key <key>`
+
+### 首次设置
+```bash
+git clone https://github.com/nashsu/llm_wiki.git
+cd llm_wiki
+npm ci                  # 安装 Node 依赖（首次用 `npm install`）
+```
+
+### 启动 dev 模式
+```bash
+npm run tauri dev
+# 首次 cargo 编译约 2-3 分钟（debug + debuginfo）
+# 增量编译 < 5 秒
+# 启动后三个本地服务同时跑起来：
+#   Vite dev URL   http://127.0.0.1:1420/    （webview 入口）
+#   API Server     http://127.0.0.1:19828/api/v1   （token 鉴权）
+#   Clip Server    http://127.0.0.1:19827/   （浏览器扩展桥）
+```
+
+### 运行测试
+```bash
+npm run typecheck                  # TypeScript：期望 0 错误
+npm run test:mocks                 # 89 文件 / 1235 测试，CI 友好（~5s）
+npm run test:llm                   # 10 个 real-LLM 测试，需 mmx-cli + API key
+cd src-tauri && cargo test --lib   # 121 个 Rust 测试
+```
+
+### 验证后端服务
+```bash
+curl http://127.0.0.1:19828/api/v1/health
+# → {"ok":true,"version":"0.4.16","enabled":true,"status":"running"}
+```
+
+### 停止
+```bash
+pkill -f 'tauri dev|cargo run'
+```
+
 ## 快速开始
 
 1. 启动应用 → 创建新项目（选择模板）
